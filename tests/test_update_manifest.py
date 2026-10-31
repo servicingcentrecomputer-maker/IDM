@@ -191,3 +191,27 @@ def test_manifest_size_limit_applies_to_bytes_and_text():
         UpdateManifest.from_json(payload, TRUSTED, max_bytes=10)
     with pytest.raises(ManifestError, match="too large"):
         UpdateManifest.from_json(payload.decode("utf-8"), TRUSTED, max_bytes=10)
+
+
+def test_optional_package_size_round_trips():
+    manifest = UpdateManifest.from_dict(
+        manifest_data(package_size=7_340_032), TRUSTED
+    )
+    assert manifest.package_size == 7_340_032
+    assert manifest.to_dict()["package_size"] == 7_340_032
+    again = UpdateManifest.from_dict(manifest.to_dict(), TRUSTED)
+    assert again == manifest
+
+
+def test_package_size_is_optional():
+    manifest = UpdateManifest.from_dict(manifest_data(), TRUSTED)
+    assert manifest.package_size is None
+    assert "package_size" not in manifest.to_dict()
+
+
+@pytest.mark.parametrize(
+    "value", [True, 0, -1, "123", 8 * 1024 * 1024 * 1024 + 1, 1.5]
+)
+def test_package_size_rejects_invalid_values(value):
+    with pytest.raises(ManifestError, match="package_size"):
+        UpdateManifest.from_dict(manifest_data(package_size=value), TRUSTED)

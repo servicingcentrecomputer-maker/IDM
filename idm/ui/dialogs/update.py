@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from pathlib import Path
 
 from PySide6.QtCore import QThread, Qt, Signal
@@ -20,8 +21,9 @@ from PySide6.QtWidgets import (
 )
 
 from ...core.settings import AppSettings
-from ...core.url_utils import format_size
+from ...core.url_utils import format_size, format_speed
 from ...updater.config import UpdateConfig
+from ...updater.download_metrics import describe_metrics
 from ...updater.errors import UpdateConfigurationError
 from ...updater.launcher import (
     InstallRequest,
@@ -102,19 +104,27 @@ class UpdatePanel(QWidget):
         theme: ThemeManager,
         on_install,
         parent=None,
+        active_downloads=None,
+        pause_downloads=None,
     ) -> None:
         super().__init__(parent)
         self._settings = settings
         self._theme = theme
         self._on_install = on_install
+        self._active_downloads = active_downloads or (lambda: 0)
+        self._pause_downloads = pause_downloads or (lambda: 0)
         self._config: UpdateConfig | None = None
         self._result: UpdateCheckResult | None = None
+        self._prepared: PreparedUpdate | None = None
         self._update_dir: Path | None = None
         self._restart_requested = True
         self._busy = False
         self._handed_off = False
         self._closing = False
         self._last_action = "check"
+        self._auto_install = False
+        self._confirmed_install = False
+        self._download_started_at = 0.0
         self._check_worker: UpdateCheckWorker | None = None
         self._install_worker: UpdateInstallWorker | None = None
 
@@ -224,6 +234,32 @@ class UpdatePanel(QWidget):
         self._theme.changed.connect(self._sync_icons)
 
     # ------------------------------------------------------------------ public
+    def set_result(self, result: UpdateCheckResult) -> None:
+        """Show an already-completed check, for the notification window."""
+        self._on_check_succeeded(result)
+
+    def start_download(self) -> None:
+        """Download and verify only; the user installs from this panel."""
+        if self._busy or self._closing:
+            return
+        self._auto_install = False
+        if self._preflight_install():
+            self._begin_download()
+
+    def start_install(self) -> None:
+        """Download and install after the user clicked “Install Now”."""
+        if self._busy or self._closing:
+            return
+        self._auto_install = True
+        if not self._confirm_install_if_needed():
+            return
+        if self._preflight_install():
+            self._begin_download()
+
+    def install_prepared(self) -> None:
+        if self._prepared is not None and self._guard_active_downloads():
+            self._install_prepared()
+
     def check_for_updates(self) -> None:
         if self._busy or self._closing:
             return
@@ -247,6 +283,8 @@ class UpdatePanel(QWidget):
         self._busy = True
         self._last_action = "check"
         self._result = None
+        self._prepared = None
+        self._confirmed_install = False
         self._update_button.hide()
         self._retry_button.hide()
         self._cancel_button.hide()
@@ -287,10 +325,16 @@ class UpdatePanel(QWidget):
         self._progress_text.hide()
         self._detail.hide()
         self._result = result
+        self._prepared = None
+        self._confirmed_install = False
         manifest = result.manifest
 
         self._latest_value.setText(str(result.latest_version))
-        self._release_date.setText(f"Released {manifest.release_date}")
+        release_text = f"Released {manifest.release_date}"
+        if getattr(manifest, "package_size", None):
+            release_text += f"  ·  {format_size(int(manifest.package_size))}"
+        self._release_date.setText(release_text)
+        self._update_button.setText("Update Now")
         self._mandatory_label.setVisible(result.update_available and result.mandatory)
         self._notes_label.setText(
             f"RELEASE NOTES — VERSION {result.latest_version}"
@@ -333,6 +377,8 @@ class UpdatePanel(QWidget):
         self._check_button.setEnabled(True)
         self._progress.hide()
         self._progress_text.hide()
+        self._prepared = None
+        self._confirmed_install = False
         self._update_button.hide()
         self._latest_value.setText("—")
         self._latest_value.set_link_enabled(False)
@@ -356,8 +402,29 @@ class UpdatePanel(QWidget):
         if self._busy or self._closing or self._result is None:
             return
         result = self._result
+        if self._prepared is not None:
+            if not self._confirm_install_if_needed():
+                return
+            self._install_prepared()
+            return
         if not result.update_available:
             return
+        if not self._confirm_install_if_needed():
+            return
+        self._auto_install = True
+        if not self._preflight_install():
+            return
+        self._begin_download()
+
+    def _confirm_install_if_needed(self) -> bool:
+        if self._confirmed_install:
+            return True
+        if not bool(getattr(self._settings, "update_ask_before_install", True)):
+            self._confirmed_install = True
+            return self._guard_active_downloads()
+        result = self._result
+        if result is None:
+            return False
 
         message = QMessageBox(self)
         message.setWindowTitle("Install IDM update")
@@ -367,11 +434,22 @@ class UpdatePanel(QWidget):
             f"Current version: {result.current_version}\n"
             f"New version: {result.latest_version}\n"
             f"Release date: {result.manifest.release_date}\n\n"
-            "IDM will close while the verified installer runs. Download "
-            "history, settings and the download queue are kept."
+            "IDM will back up your settings, download history and queue, then "
+            "close while the verified installer runs."
         )
+        if getattr(result.manifest, "package_size", None):
+            details += (
+                f"\nDownload size: {format_size(int(result.manifest.package_size))}"
+            )
         if result.mandatory:
             details = "This is a required update.\n\n" + details
+        active = int(self._active_downloads() or 0)
+        if active:
+            details += (
+                f"\n\n{active} download{'s are' if active != 1 else ' is'} "
+                "active. They will be paused before IDM closes; partial files "
+                "are kept."
+            )
         message.setInformativeText(details)
         restart_box = QCheckBox("Restart IDM when the installation finishes")
         restart_box.setChecked(True)
@@ -382,12 +460,38 @@ class UpdatePanel(QWidget):
         message.button(QMessageBox.StandardButton.Ok).setText("Install")
         message.setDefaultButton(QMessageBox.StandardButton.Cancel)
         if message.exec() != QMessageBox.StandardButton.Ok:
-            return
+            return False
 
         self._restart_requested = restart_box.isChecked()
-        if not self._preflight_install():
-            return
-        self._begin_download()
+        self._confirmed_install = True
+        return self._guard_active_downloads()
+
+    def _guard_active_downloads(self) -> bool:
+        count = int(self._active_downloads() or 0)
+        if count <= 0:
+            return True
+        message = QMessageBox(self)
+        message.setWindowTitle("Downloads are running")
+        message.setIcon(QMessageBox.Icon.Question)
+        message.setText(
+            f"{count} download{'s are' if count != 1 else ' is'} still running."
+        )
+        message.setInformativeText(
+            "The update needs IDM to close. Pause the active downloads and "
+            "continue? Partial .idm.part files are kept and can be resumed "
+            "after the update."
+        )
+        message.setStandardButtons(
+            QMessageBox.StandardButton.Cancel | QMessageBox.StandardButton.Ok
+        )
+        message.button(QMessageBox.StandardButton.Ok).setText(
+            "Pause downloads and update"
+        )
+        message.setDefaultButton(QMessageBox.StandardButton.Cancel)
+        if message.exec() != QMessageBox.StandardButton.Ok:
+            return False
+        self._pause_downloads()
+        return True
 
     def _preflight_install(self) -> bool:
         config = self._config or config_from_settings(self._settings)
@@ -420,6 +524,8 @@ class UpdatePanel(QWidget):
         if self._update_dir is None:
             self._update_dir = create_update_directory()
 
+        self._prepared = None
+        self._download_started_at = time.monotonic()
         self._busy = True
         self._last_action = "download"
         self._detail.hide()
@@ -448,16 +554,22 @@ class UpdatePanel(QWidget):
         worker.start()
 
     def _on_progress(self, done: int, total: int) -> None:
+        elapsed = max(0.0, time.monotonic() - self._download_started_at)
         if total > 0:
             percent = max(0, min(100, int(done * 100 / total)))
             self._progress.setRange(0, 100)
             self._progress.setValue(percent)
-            self._progress_text.setText(
-                f"{percent}%  ·  {format_size(done)} of {format_size(total)}"
-            )
         else:
             self._progress.setRange(0, 0)
-            self._progress_text.setText(format_size(done))
+        self._progress_text.setText(
+            describe_metrics(
+                done,
+                total if total > 0 else None,
+                elapsed,
+                format_size,
+                format_speed,
+            )
+        )
 
     def _on_download_status(self, text: str) -> None:
         if text.startswith("Downloading"):
@@ -474,21 +586,49 @@ class UpdatePanel(QWidget):
     def _on_install_succeeded(self, prepared: PreparedUpdate) -> None:
         self._busy = False
         self._cancel_button.hide()
+        self._check_button.setEnabled(True)
         self._progress.setRange(0, 100)
         self._progress.setValue(100)
         self._progress_text.hide()
-        self._set_status("Preparing installation…", "busy")
+        self._prepared = prepared
 
         if self._result is None or self._update_dir is None:
             self._on_install_failed("The update information is no longer available.")
             return
+        if self._auto_install:
+            self._set_status("Preparing installation…", "busy")
+            self._install_prepared()
+            return
+
+        self._set_status("Update downloaded and verified.", "ok")
+        self._detail.setText(
+            "The signed installer passed SHA-256 and Windows Authenticode "
+            "verification. Click Install Now when you are ready; IDM will "
+            "close and install the update."
+        )
+        self._detail.show()
+        self._update_button.setText("Install Now")
+        self._update_button.show()
+        self._update_button.setEnabled(True)
+        self._retry_button.hide()
+
+    def _install_prepared(self) -> None:
+        prepared = self._prepared
+        result = self._result
+        if prepared is None or result is None or self._update_dir is None:
+            self._on_install_failed("The update information is no longer available.")
+            return
+        if not self._guard_active_downloads():
+            return
+
         request = InstallRequest(
             installer=prepared.downloaded.path,
             sha256=prepared.downloaded.sha256,
             publisher=prepared.publisher,
-            target_version=self._result.manifest.latest_version,
+            target_version=result.manifest.latest_version,
             update_dir=self._update_dir,
             restart=self._restart_requested,
+            manifest=result.manifest,
         )
         try:
             error = self._on_install(request)
@@ -509,6 +649,9 @@ class UpdatePanel(QWidget):
         self._progress.hide()
         self._progress_text.hide()
         if self._result is not None and self._result.update_available:
+            self._update_button.setText(
+                "Install Now" if self._prepared is not None else "Update Now"
+            )
             self._update_button.show()
             self._update_button.setEnabled(True)
         self._last_action = "download"
@@ -523,8 +666,10 @@ class UpdatePanel(QWidget):
         self._progress_text.hide()
         self._set_status("Download cancelled.", "warn")
         self._detail.hide()
+        self._prepared = None
         self._cleanup_update_dir()
         if self._result is not None and self._result.update_available:
+            self._update_button.setText("Update Now")
             self._update_button.show()
             self._update_button.setEnabled(True)
         self._retry_button.show()
@@ -547,6 +692,9 @@ class UpdatePanel(QWidget):
             return
         if self._last_action == "check":
             self.check_for_updates()
+            return
+        if self._prepared is not None:
+            self.install_prepared()
             return
         if not self._preflight_install():
             return

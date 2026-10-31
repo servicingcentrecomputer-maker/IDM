@@ -402,6 +402,7 @@ $manifest = [ordered]@{
     release_notes            = @($Notes)
     download_url             = $downloadUrl
     sha256                   = $sha256
+    package_size             = [long]$size
     mandatory                = [bool]$Mandatory
     manifest_signature       = ""
 }

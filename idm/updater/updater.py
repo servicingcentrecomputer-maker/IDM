@@ -8,9 +8,11 @@ Responsibilities:
 * run the signed Inno Setup installer (UAC is left to Windows)
 * restart IDM when requested
 * remove only its own temporary update directory
+* restore the previous version (``--rollback``) from a verified installer or
+  a binary snapshot, together with the pre-update database backup
 
-The updater never touches user data and never executes scripts or commands
-supplied by the update server.
+The updater never executes scripts or commands supplied by the update server.
+User files inside the download folder are never deleted.
 """
 
 from __future__ import annotations
@@ -24,7 +26,9 @@ import sys
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-from .errors import SignatureVerificationError, UpdaterError
+from ..core.paths import database_file
+from .backup import restore_database
+from .errors import RollbackError, SignatureVerificationError, UpdaterError
 from .handoff import (
     UpdateHandoff,
     read_handoff,
@@ -32,6 +36,13 @@ from .handoff import (
     write_completion_marker,
 )
 from .package_verifier import SignatureRunner, verify_installer
+from .rollback import (
+    RollbackPlan,
+    clear_rollback_plan,
+    read_rollback_plan,
+    restore_binary_snapshot,
+)
+from .state import clear_pending_update, record_event
 
 logger = logging.getLogger("idm.updater")
 
@@ -49,6 +60,7 @@ _DETACHED_PROCESS = getattr(subprocess, "DETACHED_PROCESS", 0x00000008)
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="IDM_Updater")
     parser.add_argument("--handoff", help="Path to update-handoff.json")
+    parser.add_argument("--rollback", help="Path to a rollback plan JSON file")
     parser.add_argument("--version", action="store_true", help="Print updater version")
     args = parser.parse_args(argv)
 
@@ -58,8 +70,29 @@ def main(argv: list[str] | None = None) -> int:
         print(CURRENT_VERSION)
         return 0
 
+    if args.rollback:
+        try:
+            plan = read_rollback_plan(Path(args.rollback))
+        except RollbackError as exc:
+            _configure_logging(_fallback_log_file())
+            logger.error("Invalid rollback plan: %s", exc)
+            _notify("IDM Update", f"The previous version could not be restored.\n\n{exc}", error=True)
+            return 2
+        _configure_logging(Path(plan.log_file) if plan.log_file else _fallback_log_file())
+        try:
+            return run_rollback(plan)
+        except Exception as exc:
+            logger.exception("Unexpected rollback failure")
+            _notify(
+                "IDM Update",
+                "The previous version could not be restored. Your user data "
+                f"backup is intact.\n\n{exc}\n\nSee the updater log for details.",
+                error=True,
+            )
+            return 1
+
     if not args.handoff:
-        parser.error("--handoff is required unless --version is used")
+        parser.error("--handoff or --rollback is required unless --version is used")
 
     try:
         handoff = read_handoff(Path(args.handoff))
@@ -174,6 +207,130 @@ def run_update(
     if handoff.restart:
         restart(handoff.app_exe)
     return 5
+
+
+def run_rollback(
+    plan: RollbackPlan,
+    *,
+    signature_runner: SignatureRunner | None = None,
+    wait_for_parent=None,
+    installer_runner=None,
+    snapshot_restore=None,
+    restart_app=None,
+    notify=None,
+) -> int:
+    """Restore the previous binaries and the pre-update database."""
+    wait = wait_for_parent or _wait_for_process
+    run_installer = installer_runner or _run_installer
+    restore_snapshot = snapshot_restore or restore_binary_snapshot
+    restart = restart_app or _restart_app
+    message = notify or _notify
+
+    app_exe = Path(plan.app_exe)
+    logger.info(
+        "Rollback requested from %s to %s", plan.target_version, plan.from_version
+    )
+    if plan.parent_pid and not wait(plan.parent_pid, app_exe, _WAIT_TIMEOUT_SECONDS):
+        logger.error("IDM did not close; rollback was not started")
+        message(
+            "IDM Update",
+            "IDM did not close, so the previous version was not restored. "
+            "Close IDM and try again.",
+            error=True,
+        )
+        return 3
+
+    log_path = Path(plan.log_file) if plan.log_file else _fallback_log_file()
+    if plan.previous_installer:
+        installer = Path(plan.previous_installer)
+        try:
+            verified = verify_installer(
+                installer,
+                plan.previous_installer_sha256,
+                plan.previous_publisher,
+                signature_runner=signature_runner,
+            )
+        except SignatureVerificationError as exc:
+            logger.error("Rollback package verification failed: %s", exc)
+            message(
+                "IDM Update",
+                "The previous installer failed security verification, so "
+                f"nothing was restored.\n\n{exc}",
+                error=True,
+            )
+            return 4
+        logger.info(
+            "Rollback installer verified (%s bytes, publisher %s)",
+            verified.size,
+            verified.publisher,
+        )
+        command = [
+            str(installer),
+            *installer_arguments(app_exe, log_path.with_name("rollback-install.log")),
+        ]
+        exit_code = run_installer(command)
+        logger.info("Rollback installer exited with code %s", exit_code)
+        if exit_code != 0:
+            logger.error("Rollback installer failed: %s", _installer_error_text(exit_code))
+            message(
+                "IDM Update",
+                "The previous version could not be installed.\n\n"
+                f"{_installer_error_text(exit_code)}\n\nYour user data is intact.",
+                error=True,
+            )
+            return 5
+    elif plan.binary_snapshot:
+        try:
+            restore_snapshot(Path(plan.binary_snapshot), app_exe.parent)
+        except Exception as exc:
+            logger.exception("Binary rollback failed")
+            message(
+                "IDM Update",
+                f"The previous application files could not be restored.\n\n{exc}",
+                error=True,
+            )
+            return 6
+    else:
+        logger.error("The rollback plan has no restore source")
+        message(
+            "IDM Update",
+            "No previous version is available to restore.",
+            error=True,
+        )
+        return 7
+
+    try:
+        restore_database(Path(plan.backup_dir), database_file())
+    except Exception as exc:
+        logger.exception("Database rollback failed")
+        message(
+            "IDM Update",
+            "The previous application files were restored, but the database "
+            f"backup could not be restored.\n\n{exc}",
+            error=True,
+        )
+        return 8
+
+    record_event(
+        "rollback",
+        from_version=plan.target_version,
+        target_version=plan.from_version,
+        message="The previous version and database backup were restored.",
+        backup_dir=plan.backup_dir,
+    )
+    clear_pending_update()
+    clear_rollback_plan()
+    logger.info("Rollback to %s completed", plan.from_version)
+
+    if plan.restart:
+        restart(app_exe)
+    else:
+        message(
+            "IDM Update",
+            f"IDM {plan.from_version} was restored. Start IDM when you are ready.",
+            error=False,
+        )
+    return 0
 
 
 def installer_arguments(app_exe: Path, log_file: Path) -> list[str]:

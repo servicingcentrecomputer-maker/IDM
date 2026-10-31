@@ -52,6 +52,32 @@ def test_validate_rejects_hash_mismatch(monkeypatch, tmp_path, installer):
     assert rc == 2
 
 
+def test_validate_accepts_matching_package_size(monkeypatch, tmp_path, installer):
+    monkeypatch.setenv("IDM_UPDATE_TRUSTED_HOSTS", "updates.example.com")
+    data = manifest_data(
+        installer.read_bytes(), package_size=installer.stat().st_size
+    )
+    path = tmp_path / "latest.json"
+    path.write_text(json.dumps(data), encoding="utf-8")
+    rc = validate_main(
+        [str(path), "--allow-unsigned", "--installer", str(installer)]
+    )
+    assert rc == 0
+
+
+def test_validate_rejects_package_size_mismatch(monkeypatch, tmp_path, installer):
+    monkeypatch.setenv("IDM_UPDATE_TRUSTED_HOSTS", "updates.example.com")
+    data = manifest_data(
+        installer.read_bytes(), package_size=installer.stat().st_size + 1
+    )
+    path = tmp_path / "latest.json"
+    path.write_text(json.dumps(data), encoding="utf-8")
+    rc = validate_main(
+        [str(path), "--allow-unsigned", "--installer", str(installer)]
+    )
+    assert rc == 2
+
+
 def test_validate_requires_explicit_unsigned_opt_in(monkeypatch, manifest_file):
     monkeypatch.setenv("IDM_UPDATE_TRUSTED_HOSTS", "updates.example.com")
     assert validate_main([str(manifest_file)]) == 2

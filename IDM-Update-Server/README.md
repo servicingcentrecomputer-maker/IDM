@@ -38,6 +38,7 @@ the large files.
    - `release_notes`
    - `download_url` (the GitHub Release asset URL)
    - `sha256` (lowercase SHA-256 of the installer you uploaded)
+   - `package_size` (optional installer size in bytes, checked when present)
    - `manifest_signature` (Ed25519, if `MANIFEST_PUBLIC_KEY` is configured)
 4. In the IDM application, set `GITHUB_OWNER` in `config.py` to your GitHub
    user or organization. `UPDATE_MANIFEST_URL` is derived automatically. Set

@@ -21,6 +21,18 @@ has and has not been verified.
 - **Check for Updates** (`Help → Check for Updates…` or the button in About).
   The network request runs on a background `QThread`; the UI shows a busy
   indicator and stays responsive.
+- **Background checking** after startup and then at a user-configured interval
+  (1–168 hours, default 24). Checks are skipped while downloads are active and
+  can be turned off entirely. A failed background check never interrupts the
+  user with an error dialog; the reason is written to the log and a short
+  message appears in the status bar.
+- **Update notification**: when a newer version is found, IDM shows a
+  non-modal notification with the version, release date and release notes.
+  “Install Now” opens the normal consent flow, and “Remind Me Later” postpones
+  this exact version; the next interval tick does not nag about it again.
+- **Optional automatic download** (off by default) fetches and verifies the
+  package in the background. Installation still requires explicit approval
+  unless the user has deliberately turned off “Ask before installing”.
 - **Version comparison** using semantic versioning (MAJOR.MINOR.PATCH with
   optional pre-release/build metadata). Downgrades are never offered, even if a
   manifest asks for one.
@@ -49,8 +61,23 @@ has and has not been verified.
   waits for IDM to exit (without killing it), re-verifies the package, runs the
   signed Inno Setup installer silently, honours cancellation, restarts IDM only
   when requested, and cleans temporary files.
+- **Verified pre-update backup**: before anything runs, IDM snapshots the
+  SQLite database with `PRAGMA integrity_check`, settings, update
+  configuration, download history and queue, plus the browser-native manifest
+  configuration. The backup is verified again before it is ever restored.
+- **Pending-update state and startup recovery**: a JSON record written before
+  the installer starts lets the next IDM launch decide whether the update
+  succeeded, was not installed, failed, or left a version/DB problem. The user
+  is told what happened and can restore the previous version.
+- **Rollback**: IDM keeps the verified previous installer when it has one
+  (otherwise a binary snapshot of the installation) and writes a rollback plan.
+  “Restore Previous Version” launches the same standalone updater in rollback
+  mode, which re-verifies the package and always restores the verified
+  pre-update database. Rollback never deletes user download files.
 - **State preservation**: settings and queue are flushed, the SQLite database is
   backed up, and user data remains under `%APPDATA%\IDM Download Manager`.
+- **Update history** records started, succeeded, failed and rolled-back events
+  in `update-history.json`, with a bounded number of entries.
 - **No fake operations**: if the endpoint, publisher, manifest key or updater
   component is missing, the UI explains exactly what is missing and installation
   does not start.
@@ -83,15 +110,22 @@ store or environment variables only.
 
 ### Options → Updates
 
-| Setting | Purpose |
-| --- | --- |
-| Update server (manifest URL) | HTTPS URL of `latest.json`. Leave blank to use the value derived in `config.py`. |
-| Trusted publisher | Exact Authenticode signer name or full certificate subject. Required to install. |
-| Update channel | `Stable releases` or `Beta releases`. |
+| Setting | Default | Purpose |
+| --- | --- | --- |
+| Check for updates automatically | On | Enables the background scheduler (startup check plus interval). |
+| Check every | 24 hours | Interval between background checks; clamped to 1–168 hours. |
+| Notify me when a new version is available | On | Shows the non-modal update notification. When off, only the status bar and Help → Check for Updates report new versions. |
+| Download new versions automatically | Off | Downloads and verifies the package in the background after a check. Never installs it by itself. |
+| Ask before installing an update | On | Shows the confirmation dialog before an install. Turning this off is an explicit user choice; the default is to always ask. |
+| Update server (manifest URL) | Empty | HTTPS URL of `latest.json`. Leave blank to use the value derived in `config.py`. |
+| Trusted publisher | Empty | Exact Authenticode signer name or full certificate subject. Required to install. |
+| Update channel | Stable | `Stable releases` or `Beta releases`. |
 
-Settings are stored in the SQLite settings table with the rest of the
-application preferences. An administrator can use the baked `config.py` values
-instead, in which case the Options fields may stay blank.
+The same page shows the installed version, channel, last check time, last
+successful update time and a **Check for Updates Now** button. Settings are
+stored in the SQLite settings table with the rest of the application
+preferences. An administrator can use the baked `config.py` values instead, in
+which case the Options fields may stay blank.
 
 ### Environment overrides
 
@@ -139,6 +173,7 @@ The client accepts exactly these fields; anything else is an error.
   ],
   "download_url": "https://github.com/<owner>/IDM-Update-Server/releases/download/v1.1.0/IDM_Setup_1.1.0.exe",
   "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  "package_size": 73400320,
   "mandatory": false,
   "manifest_signature": ""
 }
@@ -154,6 +189,7 @@ The client accepts exactly these fields; anything else is an error.
 | `release_notes` | Optional. String or list of strings, up to 20,000 characters. NUL characters are removed. |
 | `download_url` | HTTPS, DNS host, no credentials or fragment, ends in `.exe`, on a trusted host, at most 2,048 characters. |
 | `sha256` | Exactly 64 hexadecimal characters. Case-insensitive; normalized to lowercase. |
+| `package_size` | Optional. Whole number of bytes between 1 and 8 GiB. When present it is shown in the confirmation dialog and checked against the downloaded file and, by `scripts/validate_manifest.py`, against the installer. |
 | `mandatory` | Strict JSON boolean. Mandatory updates still require explicit user consent. |
 | `manifest_signature` | Required string. Empty for an unsigned manifest; base64 Ed25519 signature otherwise. |
 
@@ -359,26 +395,100 @@ not downgrade an already-updated installation) or raise
 `minimum_supported_version` and ship a fixed build. Do not lower the version in
 a way that hides a security fix; increment normally.
 
+## Automatic checks, reminders and consent
+
+The scheduler lives in `idm/ui/update_scheduler.py` and is driven by a Qt timer;
+it is not a second background process. It ticks every ten minutes and starts
+the first check twenty seconds after the main window opens.
+
+- A check runs only when `update_auto_check` is on, the last check is older
+  than `update_check_interval_hours`, no update check is already running and no
+  download is active. Active downloads postpone the check rather than pausing
+  the user's transfer.
+- “Remind Me Later” stores the version and a 24-hour timestamp. The
+  notification for that same version stays suppressed until the reminder
+  expires, so the user is not asked again on every tick. A later version is
+  still shown.
+- Background failures update `update_last_check`, write the reason to
+  `idm.log` and show a short status-bar message. They do not open dialogs.
+- `update_auto_download` may prepare a verified package in the background.
+  It never runs the installer by itself. With the default
+  `update_ask_before_install`, every installation starts with a confirmation
+  dialog and the default button is **Cancel**.
+- Mandatory updates only change the wording and defaults in the dialog; they
+  are never installed silently.
+
+## Backup, recovery and rollback
+
+Before an update is handed to the installer, `idm/updater/backup.py` creates a
+directory under
+`%APPDATA%\IDM Download Manager\updates\backups\<stamp>-<from>-to-<target>`
+containing:
+
+- a consistent SQLite copy of the database (checked with
+  `PRAGMA integrity_check`, then verified after writing);
+- a JSON snapshot of settings and update configuration;
+- download history and queue exports;
+- the browser-native manifest configuration when it exists;
+- the release manifest and a `backup.json` description with versions, sizes
+  and hashes.
+
+The backup is mandatory: if it cannot be created or verified, installation
+stops. User download files are never copied, moved or deleted by this process.
+
+`pending-update.json` is written only after the backup and the package are
+ready. On the next startup `idm/updater/recovery.py` compares the installed
+version with the pending record:
+
+| Outcome | Meaning | What IDM does |
+| --- | --- | --- |
+| Succeeded | Installed version equals the target | Records success in update history and the status bar. |
+| Not installed | Installed version still equals the source | The installer did not run; the pending record is cleared and the update can be retried. |
+| Version mismatch | A third version is installed | Marks the attempt as needing attention and keeps the backup. |
+| Database error | Settings or DB cannot be opened | Restores the verified pre-update database, then reports the recovery. |
+
+When an attempt needs attention, IDM offers **Restore Previous Version** and
+**Open Backup Folder**. The rollback plan prefers a cached, verified copy of
+the previous installer. If the previous installer is unavailable, IDM stores a
+binary snapshot of the installation directory (excluding the database and
+logs) and uses that. Restoring always includes the verified pre-update
+database. If no rollback source can be verified, IDM says so and keeps the
+backup instead of pretending a rollback is available.
+
 ## Runtime flow
 
 ```
-Help → Check for Updates
+Background scheduler / Help → Check for Updates
   └─ HTTPS GET manifest (background thread, timeouts, redirect validation)
       ├─ schema / channel / signature validation
       ├─ no update → "You are using the latest version of IDM."
-      └─ update → release notes + Update Now (and clickable latest version)
-                    └─ confirmation (restart checkbox, default Cancel)
-                        └─ download to %TEMP%\IDM-Update-* (Range resume)
-                            └─ SHA-256 + Authenticode verification
-                                └─ save settings, back up database
-                                    └─ copy IDM_Updater.exe to the temp folder
-                                        └─ write update-handoff.json, launch updater
-                                            └─ IDM saves state and exits
-                                                └─ updater waits for IDM (no kill)
-                                                    └─ re-verifies package
-                                                        └─ Inno Setup silent install
-                                                            ├─ success → optional restart, cleanup
-                                                            └─ failure → notification, old app kept
+      └─ update → notification (Install Now / Remind Me Later)
+                    └─ About/update window: release notes + Update Now
+                        └─ confirmation (restart checkbox, default Cancel)
+                            └─ download to %TEMP%\IDM-Update-* (Range resume)
+                                └─ SHA-256 + Authenticode verification
+                                    └─ verified backup (DB, settings, history,
+                                       queue, browser config, update config)
+                                        └─ cache installer + write rollback plan
+                                            └─ write pending-update.json
+                                                └─ copy IDM_Updater.exe to temp
+                                                    └─ write handoff, launch updater
+                                                        └─ IDM flushes state and exits
+                                                            └─ updater waits for IDM (no kill)
+                                                                └─ re-verifies package
+                                                                    └─ Inno Setup silent install
+                                                                        ├─ success → optional restart, cleanup
+                                                                        └─ failure → old app kept, log retained
+
+Next IDM start → read pending-update.json
+  ├─ target version → success recorded
+  ├─ source version → update did not run
+  ├─ other version → “update needs attention”
+  │                    ├─ Restore Previous Version → updater --rollback
+  │                    │     └─ verify previous installer/snapshot
+  │                    │         └─ restore verified DB → restart IDM
+  │                    └─ Open Backup Folder
+  └─ settings/DB cannot open → restore verified DB, then start normally
 ```
 
 The updater is launched detached from the temporary folder, not from `{app}`.
@@ -404,10 +514,16 @@ an installation.
 | Update download and handoff | `%TEMP%\IDM-Update-*` |
 | Updater log | `%APPDATA%\IDM Download Manager\logs\updater.log` |
 | Application log | `%APPDATA%\IDM Download Manager\logs\idm.log` |
-| Pre-update database backups | `%APPDATA%\IDM Download Manager\database\backups\` |
+| Pending update record | `%APPDATA%\IDM Download Manager\updates\pending-update.json` |
+| Update history | `%APPDATA%\IDM Download Manager\updates\update-history.json` |
+| Verified pre-update backups | `%APPDATA%\IDM Download Manager\updates\backups\<stamp>-<from>-to-<target>\` |
+| Rollback plan | `%APPDATA%\IDM Download Manager\updates\rollback\last-rollback.json` |
+| Cached previous installers | `%APPDATA%\IDM Download Manager\updates\rollback\IDM_Setup_<version>.exe` |
+| Binary snapshots | `%APPDATA%\IDM Download Manager\updates\rollback\app-<version>-<stamp>\` |
 | Settings, history, queue | `%APPDATA%\IDM Download Manager\database\idm.sqlite3` |
 
-- The five newest pre-update database backups are retained.
+- The five newest pre-update backups are retained; the three newest cached
+  installers and one binary snapshot are kept for rollback.
 - On success the updater removes its temp folder. Its own executable is locked
   while running, so it leaves a completion marker; the next IDM start removes
   that folder. Abandoned update folders older than 24 hours are also removed at
@@ -417,6 +533,9 @@ an installation.
 - Cleanup only accepts `IDM-Update-*` directories directly under the system temp
   folder and never follows symbolic links. User data, downloads and the
   installation directory are never deleted by this cleanup.
+- Binary snapshots exclude user downloads, logs, partial files, `__pycache__`
+  and `.git`. They are only created when no verified previous installer is
+  cached and are size-capped (2 GiB).
 
 ## Security invariants
 
@@ -435,8 +554,19 @@ an installation.
   updater immediately before execution.
 - The expected publisher must match exactly.
 - No downgrade is offered, regardless of `mandatory` or the manifest contents.
-- The user must confirm every installation. Mandatory updates are still
-  cancelled by default and are never installed silently.
+- The user must confirm every installation by default. Mandatory updates are
+  still cancelled by default and are never installed silently. Automatic
+  checking, automatic download and notifications never install anything by
+  themselves.
+- Active downloads are never paused or closed without consent. The install
+  flow pauses them only after the user agrees.
+- A verified pre-update backup is created before installation and is required;
+  failure to create or verify it stops the update. The database is never reset
+  by an update, and user download files are never deleted.
+- Restores only accept paths from the signed plan/backup manifest, reject
+  path traversal, and re-verify SHA-256 and size before copying. Rollback
+  re-verifies the previous package (including Authenticode) or an accepted
+  binary snapshot.
 - Windows UAC is never bypassed; Defender and SmartScreen are never disabled.
 - Logs contain versions, URLs without query strings, hashes and error details,
   but no credentials or tokens. No token support exists by design.
@@ -449,25 +579,32 @@ an installation.
 
 ## Test coverage
 
-`pytest tests -q` currently passes **252 tests**. Relevant files:
+`pytest tests -q` currently passes **455 tests**. Relevant files:
 
 | Scenario | Coverage |
 | --- | --- |
-| No update available | `test_update_checker.py`, `test_update_ui.py` |
-| Update available | `test_update_checker.py`, `test_update_ui.py` |
-| Invalid JSON / invalid fields / unknown or duplicate fields | `test_update_manifest.py` |
+| No update available / update available | `test_update_checker.py`, `test_update_ui.py` |
+| Invalid JSON / invalid fields / unknown or duplicate fields / `package_size` | `test_update_manifest.py` |
 | Signed manifest: valid, tampered, wrong key, unsigned-with-key | `test_signed_manifest.py` |
 | Config precedence, derived endpoint, channel, trusted hosts | `test_update_config.py` |
-| Release scripts: validator CLI, keygen/sign/verify, hash mismatch | `test_release_scripts.py` |
+| Release scripts: validator CLI, keygen/sign/verify, hash/size mismatch | `test_release_scripts.py` |
 | No internet, timeout, TLS failure | `test_update_checker.py` (injected transport errors) |
 | Interrupted download and Range resume | `test_update_downloader.py` |
-| Wrong SHA-256 | `test_update_downloader.py`, `test_package_verifier.py` |
+| Wrong SHA-256, download metrics | `test_update_downloader.py`, `test_package_verifier.py`, `test_download_metrics.py` |
 | Invalid or wrong signature | `test_package_verifier.py`, `test_updater.py` |
 | Installer cancelled | `test_updater.py` |
 | Redirect/host validation, size caps | `test_update_checker.py`, `test_update_downloader.py` |
 | Version comparison, no downgrade, mandatory, channels | `test_version_manager.py`, `test_update_checker.py` |
 | Handoff validation, updater run flow, args | `test_updater.py` |
-| Settings/DB preservation, upgrade, uninstall | Existing packaging documentation; database backup and shutdown logic are exercised indirectly. |
+| Automatic-check schedule and reminder suppression | `test_update_schedule.py` |
+| Settings defaults, clamping, persistence, snapshots | `test_update_settings.py` |
+| Verified backups: tamper, unsafe paths, restore, pruning | `test_update_backup.py` |
+| Pending state, success/failure status, history cap | `test_update_state.py` |
+| Rollback: cache, snapshot, plan validation, `--rollback` run | `test_rollback.py` |
+| Startup recovery and rollback-plan matching | `test_update_recovery.py` |
+| Notification actions and main-window gating | `test_update_notification.py` |
+| Release-note section rendering | `test_release_notes.py` |
+| Settings/DB preservation, upgrade, uninstall | Database backup, restore and shutdown logic are covered by `test_update_backup.py`, `test_update_state.py`, `test_update_recovery.py` and `test_rollback.py`. |
 | End-to-end signed update from a real server | **Not executed**: requires a code-signing certificate, a public HTTPS endpoint and the user's GitHub repository. |
 
 To exercise the real signature path on a Windows development machine, build an
@@ -498,8 +635,11 @@ end-to-end update requires signing as described above.
 ## Limitations
 
 - Full-installer updates only; no delta patching.
-- No background polling or silent automatic checks. Checks are user initiated,
-  as required.
+- Automatic checks run only while IDM is open; there is no Windows service or
+  scheduled task, and nothing installs without user approval.
+- Installations decide success by comparing the installed version with the
+  pending record. A build that reports a different version than its manifest
+  is treated as a version mismatch rather than a success.
 - The update server must be publicly reachable over HTTPS; private tokens and
   authenticated endpoints are not supported.
 - A signed release requires a code-signing certificate and a manually controlled

@@ -173,12 +173,15 @@ class Database:
             ensure_app_layout()
         self.path = Path(path) if path is not None else database_file()
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._connection: sqlite3.Connection | None = sqlite3.connect(
-            str(self.path), timeout=8
-        )
-        self._connection.row_factory = sqlite3.Row
-        self._connection.execute("PRAGMA foreign_keys = ON")
-        self._migrate(self._connection)
+        connection = sqlite3.connect(str(self.path), timeout=8)
+        connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA foreign_keys = ON")
+        try:
+            self._migrate(connection)
+        except Exception:
+            connection.close()
+            raise
+        self._connection: sqlite3.Connection | None = connection
         logger.debug("SQLite database ready at %s", self.path)
 
     # ------------------------------------------------------------------ migrations
@@ -232,6 +235,19 @@ class Database:
         except sqlite3.Error:
             connection.rollback()
             raise
+
+    def schema_version(self) -> int:
+        connection = self._connection_or_raise()
+        row = connection.execute("PRAGMA user_version").fetchone()
+        return int(row[0]) if row else 0
+
+    def quick_check(self) -> None:
+        """Raise when SQLite reports any database corruption."""
+        connection = self._connection_or_raise()
+        row = connection.execute("PRAGMA quick_check").fetchone()
+        result = str(row[0]) if row else "missing"
+        if result.casefold() != "ok":
+            raise RuntimeError(f"SQLite quick_check failed: {result}")
 
     # ------------------------------------------------------------------ settings
     def setting_count(self) -> int:

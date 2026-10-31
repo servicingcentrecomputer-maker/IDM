@@ -92,6 +92,36 @@ def updater_log_file() -> Path:
     return logs_dir() / "updater.log"
 
 
+def updates_dir() -> Path:
+    directory = app_data_dir() / "updates"
+    directory.mkdir(parents=True, exist_ok=True)
+    return directory
+
+
+def update_backups_dir() -> Path:
+    directory = updates_dir() / "backups"
+    directory.mkdir(parents=True, exist_ok=True)
+    return directory
+
+
+def update_rollback_dir() -> Path:
+    directory = updates_dir() / "rollback"
+    directory.mkdir(parents=True, exist_ok=True)
+    return directory
+
+
+def pending_update_file() -> Path:
+    return updates_dir() / "pending-update.json"
+
+
+def update_history_file() -> Path:
+    return updates_dir() / "update-history.json"
+
+
+def last_rollback_plan_file() -> Path:
+    return update_rollback_dir() / "last-rollback.json"
+
+
 def project_root() -> Path:
     if getattr(sys, "frozen", False):
         return Path(getattr(sys, "_MEIPASS", Path(sys.executable).parent))

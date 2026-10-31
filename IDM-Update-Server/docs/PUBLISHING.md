@@ -153,6 +153,7 @@ bad installer was published, publish a new version instead of overwriting it.
   ],
   "download_url": "https://github.com/<YOUR_GITHUB_USERNAME>/IDM-Update-Server/releases/download/v1.1.0/IDM_Setup_1.1.0.exe",
   "sha256": "<LOWERCASE_SHA256_OF_IDM_SETUP_1.1.0.EXE>",
+  "package_size": 73400320,
   "mandatory": false,
   "manifest_signature": ""
 }

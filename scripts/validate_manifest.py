@@ -123,6 +123,12 @@ def main(argv: list[str] | None = None) -> int:
                 f"  manifest: {manifest.sha256}\n"
                 f"  installer: {digest}"
             )
+        if manifest.package_size is not None and manifest.package_size != size:
+            return _fail(
+                "Installer size does not match the manifest package_size.\n"
+                f"  manifest: {manifest.package_size}\n"
+                f"  installer: {size}"
+            )
         print(f"Installer OK: {args.installer} ({size} bytes, sha256={digest})")
     elif not args.json:
         print("Installer not checked (no --installer supplied).")

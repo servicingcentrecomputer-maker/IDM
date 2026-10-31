@@ -41,3 +41,15 @@ class SignatureVerificationError(UpdateError):
 
 class UpdaterError(UpdateError):
     """The standalone updater could not complete the installation."""
+
+
+class BackupError(UpdateError):
+    """A pre-update backup could not be created or verified."""
+
+
+class RollbackError(UpdateError):
+    """The previous version could not be restored."""
+
+
+class UpdateStateError(UpdateError):
+    """The persisted update state is missing or malformed."""

@@ -38,6 +38,7 @@ _SHA256_RE = re.compile(r"^[0-9a-fA-F]{64}$")
 _MAX_RELEASE_NOTES = 20_000
 _MAX_URL_LENGTH = 2048
 _MAX_SIGNATURE_LENGTH = 4096
+_MAX_PACKAGE_SIZE = 8 * 1024 * 1024 * 1024
 
 MANIFEST_FIELDS = frozenset(
     {
@@ -49,6 +50,7 @@ MANIFEST_FIELDS = frozenset(
         "release_notes",
         "download_url",
         "sha256",
+        "package_size",
         "mandatory",
         "manifest_signature",
     }
@@ -65,7 +67,8 @@ class UpdateManifest:
     release_notes: str
     download_url: str
     sha256: str
-    mandatory: bool
+    package_size: int | None = None
+    mandatory: bool = False
     manifest_signature: str = ""
 
     @property
@@ -77,7 +80,7 @@ class UpdateManifest:
         return Version.parse(self.minimum_supported_version)
 
     def to_dict(self) -> dict:
-        return {
+        data = {
             "app_name": self.app_name,
             "channel": self.channel,
             "latest_version": self.latest_version,
@@ -89,6 +92,9 @@ class UpdateManifest:
             "mandatory": self.mandatory,
             "manifest_signature": self.manifest_signature,
         }
+        if self.package_size is not None:
+            data["package_size"] = self.package_size
+        return data
 
     @classmethod
     def from_json(
@@ -179,6 +185,8 @@ class UpdateManifest:
                 "sha256 must be exactly 64 hexadecimal characters."
             )
 
+        package_size = _read_package_size(data.get("package_size"))
+
         mandatory = data.get("mandatory")
         if not isinstance(mandatory, bool):
             raise ManifestError("mandatory must be true or false.")
@@ -192,6 +200,7 @@ class UpdateManifest:
             release_notes=release_notes,
             download_url=download_url,
             sha256=sha_text,
+            package_size=package_size,
             mandatory=mandatory,
             manifest_signature=signature,
         )
@@ -319,6 +328,16 @@ def _require_text(data: dict, key: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ManifestError(f"“{key}” is required and must be a non-empty string.")
     return value.strip()
+
+
+def _read_package_size(value: object) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ManifestError("package_size must be a whole number of bytes.")
+    if value <= 0 or value > _MAX_PACKAGE_SIZE:
+        raise ManifestError("package_size is outside the supported range.")
+    return int(value)
 
 
 def _normalize_release_date(value: str) -> str:

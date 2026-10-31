@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -43,6 +44,8 @@ from downloads.location_manager import (
 from ...constants import MAX_SPEED_LIMIT_KBPS
 from ...core.paths import default_download_dir
 from ...core.settings import AppSettings
+from ...updater.schedule import parse_timestamp
+from ...updater.version_manager import current_version
 from .. import icons
 from ..theme import PALETTES, THEME_LABELS, THEME_ORDER, ThemeManager
 from .common import (
@@ -54,6 +57,13 @@ from .common import (
     secondary_button,
 )
 from .location_rule import LocationRuleDialog
+
+def _format_update_time(value: str) -> str:
+    moment = parse_timestamp(value)
+    if moment is None:
+        return "Never"
+    return moment.astimezone().strftime("%Y-%m-%d %H:%M")
+
 
 _THEME_DESCRIPTIONS = {
     "classic": "Light grey chrome with the classic blue progress bars.",
@@ -181,6 +191,7 @@ class OptionsDialog(BaseDialog):
         super().__init__(theme, parent)
         self._settings = settings
         self._values: dict | None = None
+        self._check_requested = False
         self._original_theme = theme.mode
         self._preview_mode = theme.mode
 
@@ -628,6 +639,95 @@ class OptionsDialog(BaseDialog):
         page = self._page()
         layout = page.layout()
 
+        layout.addWidget(make_label("AUTOMATIC UPDATES", "FieldLabel"))
+        self.auto_check_checkbox = QCheckBox(
+            "Check for updates automatically"
+        )
+        self.auto_check_checkbox.setChecked(
+            bool(getattr(self._settings, "update_auto_check", True))
+        )
+        layout.addWidget(self.auto_check_checkbox)
+
+        interval_row = QHBoxLayout()
+        interval_row.setSpacing(8)
+        interval_label = make_label("Check every", "HintLabel")
+        interval_row.addWidget(interval_label)
+        self.update_interval_spin = QSpinBox()
+        self.update_interval_spin.setRange(1, 168)
+        self.update_interval_spin.setSuffix(" hours")
+        self.update_interval_spin.setValue(
+            int(getattr(self._settings, "update_check_interval_hours", 24))
+        )
+        interval_row.addWidget(self.update_interval_spin)
+        interval_row.addStretch(1)
+        layout.addLayout(interval_row)
+
+        self.update_notify_checkbox = QCheckBox(
+            "Notify me when a new version is available"
+        )
+        self.update_notify_checkbox.setChecked(
+            bool(getattr(self._settings, "update_notify", True))
+        )
+        layout.addWidget(self.update_notify_checkbox)
+
+        auto_hint = make_label(
+            "IDM checks after startup and then at the configured interval. "
+            "Checks are postponed while downloads are active. Automatic checking "
+            "never installs a version without your approval.",
+            "HintLabel",
+        )
+        auto_hint.setWordWrap(True)
+        layout.addWidget(auto_hint)
+        layout.addSpacing(12)
+
+        layout.addWidget(make_label("INSTALLATION", "FieldLabel"))
+        self.auto_download_checkbox = QCheckBox(
+            "Download new versions automatically"
+        )
+        self.auto_download_checkbox.setChecked(
+            bool(getattr(self._settings, "update_auto_download", False))
+        )
+        layout.addWidget(self.auto_download_checkbox)
+        self.ask_install_checkbox = QCheckBox(
+            "Ask before installing an update"
+        )
+        self.ask_install_checkbox.setChecked(
+            bool(getattr(self._settings, "update_ask_before_install", True))
+        )
+        layout.addWidget(self.ask_install_checkbox)
+        install_hint = make_label(
+            "IDM backs up the database, settings, history and queue before an "
+            "update and pauses active downloads only with your consent.",
+            "HintLabel",
+        )
+        install_hint.setWordWrap(True)
+        layout.addWidget(install_hint)
+        layout.addSpacing(12)
+
+        layout.addWidget(make_label("UPDATE STATUS", "FieldLabel"))
+        self.update_status_label = make_label(
+            f"Installed version: {current_version()}   ·   "
+            f"Channel: {getattr(self._settings, 'update_channel', 'stable')}",
+            "HintLabel",
+        )
+        layout.addWidget(self.update_status_label)
+        self.last_check_label = make_label(
+            "Last check: "
+            + _format_update_time(getattr(self._settings, "update_last_check", "")),
+            "HintLabel",
+        )
+        layout.addWidget(self.last_check_label)
+        self.last_success_label = make_label(
+            "Last successful update: "
+            + _format_update_time(getattr(self._settings, "update_last_success", "")),
+            "HintLabel",
+        )
+        layout.addWidget(self.last_success_label)
+        check_now = secondary_button("Check for Updates Now")
+        check_now.clicked.connect(self._request_update_check)
+        layout.addWidget(check_now, 0, Qt.AlignmentFlag.AlignLeft)
+        layout.addSpacing(12)
+
         layout.addWidget(make_label("UPDATE SERVER", "FieldLabel"))
         self.update_url_edit = QLineEdit(self._settings.update_manifest_url)
         self.update_url_edit.setMinimumHeight(30)
@@ -813,9 +913,21 @@ class OptionsDialog(BaseDialog):
             "update_manifest_url": update_url,
             "update_publisher": self.publisher_edit.text().strip(),
             "update_channel": self.update_channel_combo.currentData(),
+            "update_auto_check": self.auto_check_checkbox.isChecked(),
+            "update_check_interval_hours": self.update_interval_spin.value(),
+            "update_auto_download": self.auto_download_checkbox.isChecked(),
+            "update_ask_before_install": self.ask_install_checkbox.isChecked(),
+            "update_notify": self.update_notify_checkbox.isChecked(),
             "location_config": config,
         }
         self.accept()
+
+    def _request_update_check(self) -> None:
+        self._check_requested = True
+        self._save()
+
+    def wants_update_check(self) -> bool:
+        return self._values is not None and self._check_requested
 
     def reject(self) -> None:
         if self._values is None and self._preview_mode != self._original_theme:

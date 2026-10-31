@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QTimer, Qt
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout
 
 from ...constants import (
@@ -26,6 +26,10 @@ class AboutDialog(BaseDialog):
         parent=None,
         settings=None,
         on_install=None,
+        initial_result=None,
+        auto_action: str | None = None,
+        active_download_count=None,
+        pause_downloads=None,
     ) -> None:
         super().__init__(theme, parent)
         self._closed = False
@@ -90,10 +94,24 @@ class AboutDialog(BaseDialog):
         root.addWidget(details)
         root.addSpacing(2)
 
-        self.update_panel = UpdatePanel(settings, theme, on_install, self)
+        self.update_panel = UpdatePanel(
+            settings,
+            theme,
+            on_install,
+            self,
+            active_downloads=active_download_count,
+            pause_downloads=pause_downloads,
+        )
         self.update_panel.installation_started.connect(self.accept)
         root.addWidget(self.update_panel)
         root.addStretch(1)
+
+        if initial_result is not None:
+            self.update_panel.set_result(initial_result)
+            if auto_action == "install":
+                QTimer.singleShot(0, self.update_panel.start_install)
+            elif auto_action == "download":
+                QTimer.singleShot(0, self.update_panel.start_download)
 
         footer = QHBoxLayout()
         footer.addStretch(1)

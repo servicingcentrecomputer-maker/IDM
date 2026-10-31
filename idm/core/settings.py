@@ -8,6 +8,7 @@ download folder, window geometry and engine preferences.
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from PySide6.QtCore import QSettings
@@ -45,6 +46,16 @@ _DEFAULTS: dict[str, Any] = {
     "update_manifest_url": "",
     "update_publisher": "",
     "update_channel": app_config.UPDATE_CHANNEL,
+    "update_auto_check": True,
+    "update_check_interval_hours": 24,
+    "update_auto_download": False,
+    "update_ask_before_install": True,
+    "update_notify": True,
+    "update_last_check": "",
+    "update_last_success": "",
+    "update_last_success_version": "",
+    "update_remind_after": "",
+    "update_remind_version": "",
     "download_mode": MODE_DEFAULT,
     "download_type_rules": [],
 }
@@ -83,6 +94,22 @@ class AppSettings:
         self.update_manifest_url: str = _DEFAULTS["update_manifest_url"]
         self.update_publisher: str = _DEFAULTS["update_publisher"]
         self.update_channel: str = _DEFAULTS["update_channel"]
+        self.update_auto_check: bool = _DEFAULTS["update_auto_check"]
+        self.update_check_interval_hours: int = _DEFAULTS[
+            "update_check_interval_hours"
+        ]
+        self.update_auto_download: bool = _DEFAULTS["update_auto_download"]
+        self.update_ask_before_install: bool = _DEFAULTS[
+            "update_ask_before_install"
+        ]
+        self.update_notify: bool = _DEFAULTS["update_notify"]
+        self.update_last_check: str = _DEFAULTS["update_last_check"]
+        self.update_last_success: str = _DEFAULTS["update_last_success"]
+        self.update_last_success_version: str = _DEFAULTS[
+            "update_last_success_version"
+        ]
+        self.update_remind_after: str = _DEFAULTS["update_remind_after"]
+        self.update_remind_version: str = _DEFAULTS["update_remind_version"]
         self.location_config = DownloadLocationConfig()
         self.load()
 
@@ -171,6 +198,52 @@ class AppSettings:
         self.update_channel = (
             channel if channel in _UPDATE_CHANNELS else _DEFAULTS["update_channel"]
         )
+        self.update_auto_check = _coerce_bool(
+            values.get("update_auto_check", _DEFAULTS["update_auto_check"]),
+            _DEFAULTS["update_auto_check"],
+        )
+        self.update_check_interval_hours = _coerce_int(
+            values.get(
+                "update_check_interval_hours",
+                _DEFAULTS["update_check_interval_hours"],
+            ),
+            _DEFAULTS["update_check_interval_hours"],
+            1,
+            168,
+        )
+        self.update_auto_download = _coerce_bool(
+            values.get("update_auto_download", _DEFAULTS["update_auto_download"]),
+            _DEFAULTS["update_auto_download"],
+        )
+        self.update_ask_before_install = _coerce_bool(
+            values.get(
+                "update_ask_before_install",
+                _DEFAULTS["update_ask_before_install"],
+            ),
+            _DEFAULTS["update_ask_before_install"],
+        )
+        self.update_notify = _coerce_bool(
+            values.get("update_notify", _DEFAULTS["update_notify"]),
+            _DEFAULTS["update_notify"],
+        )
+        self.update_last_check = _coerce_text(
+            values.get("update_last_check", _DEFAULTS["update_last_check"])
+        )
+        self.update_last_success = _coerce_text(
+            values.get("update_last_success", _DEFAULTS["update_last_success"])
+        )
+        self.update_last_success_version = _coerce_text(
+            values.get(
+                "update_last_success_version",
+                _DEFAULTS["update_last_success_version"],
+            )
+        )
+        self.update_remind_after = _coerce_text(
+            values.get("update_remind_after", _DEFAULTS["update_remind_after"])
+        )
+        self.update_remind_version = _coerce_text(
+            values.get("update_remind_version", _DEFAULTS["update_remind_version"])
+        )
         self.location_config = DownloadLocationConfig.from_settings(values)
 
     # ------------------------------------------------------------------ saving
@@ -230,6 +303,30 @@ class AppSettings:
             channel = str(values["update_channel"]).strip().lower()
             if channel in _UPDATE_CHANNELS:
                 self.update_channel = channel
+        for key in (
+            "update_auto_check",
+            "update_auto_download",
+            "update_ask_before_install",
+            "update_notify",
+        ):
+            if key in values:
+                setattr(self, key, bool(values[key]))
+        if "update_check_interval_hours" in values:
+            self.update_check_interval_hours = _coerce_int(
+                values["update_check_interval_hours"],
+                self.update_check_interval_hours,
+                1,
+                168,
+            )
+        for key in (
+            "update_last_check",
+            "update_last_success",
+            "update_last_success_version",
+            "update_remind_after",
+            "update_remind_version",
+        ):
+            if key in values:
+                setattr(self, key, str(values[key]).strip())
         if isinstance(values.get("location_config"), DownloadLocationConfig):
             self.location_config = values["location_config"].normalized()
         elif "download_mode" in values or "download_type_rules" in values:
@@ -264,8 +361,45 @@ class AppSettings:
             "update_manifest_url": self.update_manifest_url,
             "update_publisher": self.update_publisher,
             "update_channel": self.update_channel,
+            "update_auto_check": self.update_auto_check,
+            "update_check_interval_hours": self.update_check_interval_hours,
+            "update_auto_download": self.update_auto_download,
+            "update_ask_before_install": self.update_ask_before_install,
+            "update_notify": self.update_notify,
+            "update_last_check": self.update_last_check,
+            "update_last_success": self.update_last_success,
+            "update_last_success_version": self.update_last_success_version,
+            "update_remind_after": self.update_remind_after,
+            "update_remind_version": self.update_remind_version,
             **self.location_config.to_settings(),
         }
+
+    def snapshot(self) -> dict[str, Any]:
+        """Return a JSON-safe copy of every persisted setting."""
+        return dict(self._as_dict())
+
+    # ------------------------------------------------------------------ updates
+    def note_update_check(self) -> None:
+        self.update_last_check = _utc_now()
+        self.save()
+
+    def note_update_success(self, version: str) -> None:
+        self.update_last_success = _utc_now()
+        self.update_last_success_version = str(version).strip()
+        self.clear_update_reminder(save=False)
+        self.save()
+
+    def remind_later(self, version: str, hours: int = 24) -> None:
+        moment = datetime.now(timezone.utc) + timedelta(hours=max(1, int(hours)))
+        self.update_remind_after = moment.isoformat(timespec="seconds")
+        self.update_remind_version = str(version).strip()
+        self.save()
+
+    def clear_update_reminder(self, save: bool = True) -> None:
+        self.update_remind_after = ""
+        self.update_remind_version = ""
+        if save:
+            self.save()
 
     # ------------------------------------------------------------------ blobs
     def load_bytes(self, key: str) -> bytes | None:
@@ -327,6 +461,16 @@ def _coerce_int(value: Any, default: int, minimum: int, maximum: int) -> int:
     except (TypeError, ValueError):
         return default
     return max(minimum, min(maximum, number))
+
+
+def _coerce_text(value: Any) -> str:
+    if value is None:
+        return ""
+    return str(value).strip()
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
 def _coerce_bool(value: Any, default: bool) -> bool:

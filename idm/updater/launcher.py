@@ -38,6 +38,7 @@ class InstallRequest:
     target_version: str
     update_dir: Path
     restart: bool
+    manifest: object | None = None
 
 
 def updater_executable() -> Path | None:
@@ -132,6 +133,33 @@ def launch_updater(updater: Path, handoff_path: Path) -> int:
     except OSError as exc:
         raise UpdaterError(f"The updater could not be started: {exc}") from exc
     logger.info("Started updater process %s", process.pid)
+    return process.pid
+
+
+def launch_rollback(updater: Path, plan_path: Path) -> int:
+    """Start the updater in rollback mode; it waits for this process to exit."""
+    updater = Path(updater)
+    if not updater.is_file():
+        raise UpdaterError(
+            "The IDM Updater component is missing from this installation. "
+            "Reinstall IDM to repair the update system."
+        )
+    flags = 0
+    if sys.platform == "win32":
+        flags = _DETACHED_PROCESS | _CREATE_NEW_PROCESS_GROUP
+    try:
+        process = subprocess.Popen(
+            [str(updater), "--rollback", str(plan_path)],
+            cwd=str(updater.parent),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            close_fds=True,
+            creationflags=flags,
+        )
+    except OSError as exc:
+        raise UpdaterError(f"The updater could not be started: {exc}") from exc
+    logger.info("Started rollback updater process %s", process.pid)
     return process.pid
 
 
