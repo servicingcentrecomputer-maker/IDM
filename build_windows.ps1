@@ -353,8 +353,8 @@ Write-Host "dist\IDM_NativeHost.exe and dist-extensions only."
 # ---------------------------------------------------------------- extensions
 Write-Step "Validating and packaging browser extensions"
 Invoke-Checked $PythonExe @((Join-Path $Root "scripts\package_extensions.py")) "Packaging browser extensions"
-foreach ($package in @("IDM_Chrome_Extension.zip", "IDM_Edge_Extension.zip", "IDM_Firefox_Extension.zip")) {
-    $packagePath = Join-Path $DistExtensionsDir $package
+foreach ($extensionPackage in @("IDM_Chrome_Extension.zip", "IDM_Edge_Extension.zip", "IDM_Firefox_Extension.zip")) {
+    $packagePath = Join-Path $DistExtensionsDir $extensionPackage
     if (-not (Test-Path -LiteralPath $packagePath -PathType Leaf)) {
         throw "The extension package was not created: $packagePath"
     }
