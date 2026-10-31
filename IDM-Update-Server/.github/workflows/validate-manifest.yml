@@ -1,0 +1,82 @@
+name: Validate update manifest
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "latest.json"
+      - "manifest.schema.json"
+      - ".github/workflows/validate-manifest.yml"
+  pull_request:
+    paths:
+      - "latest.json"
+      - "manifest.schema.json"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Validate latest.json against the schema
+        run: |
+          python -m pip install --disable-pip-version-check check-jsonschema
+          check-jsonschema --schemafile manifest.schema.json latest.json
+
+      - name: Verify Ed25519 signature when a public key is configured
+        if: vars.MANIFEST_PUBLIC_KEY != ''
+        env:
+          MANIFEST_PUBLIC_KEY: ${{ vars.MANIFEST_PUBLIC_KEY }}
+        run: |
+          python -m pip install --disable-pip-version-check "cryptography>=42,<47"
+          python - <<'PY'
+          import base64
+          import json
+          import os
+          import sys
+
+          from cryptography.exceptions import InvalidSignature
+          from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+
+          with open("latest.json", encoding="utf-8-sig") as handle:
+              data = json.load(handle)
+          signature = str(data.get("manifest_signature", "")).strip()
+          if not signature:
+              sys.exit("latest.json is unsigned but MANIFEST_PUBLIC_KEY is set")
+          payload = {k: v for k, v in data.items() if k != "manifest_signature"}
+          message = json.dumps(
+              payload,
+              ensure_ascii=False,
+              sort_keys=True,
+              separators=(",", ":"),
+              allow_nan=False,
+          ).encode("utf-8")
+          key = Ed25519PublicKey.from_public_bytes(
+              base64.b64decode(os.environ["MANIFEST_PUBLIC_KEY"], validate=True)
+          )
+          try:
+              key.verify(base64.b64decode(signature, validate=True), message)
+          except InvalidSignature:
+              sys.exit("manifest_signature verification failed")
+          print("Ed25519 manifest signature verified")
+          PY
+
+      - name: Reject placeholder template values
+        run: |
+          python - <<'PY'
+          import json
+          import sys
+
+          data = json.load(open("latest.json", encoding="utf-8-sig"))
+          text = json.dumps(data)
+          if "YOUR_GITHUB_USERNAME" in text or "REPLACE_WITH" in text:
+              sys.exit("latest.json still contains template placeholders")
+          PY

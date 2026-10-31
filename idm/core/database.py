@@ -1,0 +1,483 @@
+"""SQLite storage for application settings and download history.
+
+The database lives in the user's AppData directory.  All access happens on the
+GUI thread; the download workers only emit signals, so no cross-thread SQLite
+access is required.
+
+Schema changes are applied through numbered migrations recorded in
+``PRAGMA user_version``.  Existing rows are preserved; new columns are added in
+place and the legacy ``settings`` table is copied into ``app_settings`` once.
+"""
+
+from __future__ import annotations
+
+import base64
+import json
+import logging
+import sqlite3
+from collections.abc import Iterable
+from datetime import datetime
+from pathlib import Path
+from typing import Any
+
+from .paths import database_file, ensure_app_layout
+
+logger = logging.getLogger(__name__)
+
+SCHEMA_VERSION = 3
+
+_SCHEMA_V1 = """
+CREATE TABLE IF NOT EXISTS settings (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    kind  TEXT NOT NULL DEFAULT 'json'
+);
+
+CREATE TABLE IF NOT EXISTS downloads (
+    id               TEXT PRIMARY KEY,
+    url              TEXT NOT NULL,
+    filename         TEXT NOT NULL,
+    folder           TEXT NOT NULL,
+    category         TEXT NOT NULL DEFAULT 'Other',
+    priority         INTEGER NOT NULL DEFAULT 1,
+    status           TEXT NOT NULL DEFAULT 'Queued',
+    total_bytes      INTEGER,
+    downloaded_bytes INTEGER NOT NULL DEFAULT 0,
+    speed            REAL NOT NULL DEFAULT 0,
+    eta              REAL,
+    error            TEXT NOT NULL DEFAULT '',
+    content_type     TEXT NOT NULL DEFAULT '',
+    range_supported  INTEGER,
+    created_at       TEXT NOT NULL,
+    completed_at     TEXT,
+    last_try         TEXT,
+    queue_seq        REAL NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_downloads_created
+    ON downloads(created_at);
+CREATE INDEX IF NOT EXISTS idx_downloads_status
+    ON downloads(status);
+"""
+
+_SCHEMA_V2 = """
+CREATE TABLE IF NOT EXISTS app_settings (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    kind  TEXT NOT NULL DEFAULT 'json'
+);
+
+INSERT OR IGNORE INTO app_settings (key, value, kind)
+    SELECT key, value, kind FROM settings;
+
+CREATE TABLE IF NOT EXISTS download_segments (
+    download_id      TEXT NOT NULL,
+    segment_index    INTEGER NOT NULL,
+    start_byte       INTEGER NOT NULL,
+    end_byte         INTEGER NOT NULL,
+    downloaded_bytes INTEGER NOT NULL DEFAULT 0,
+    status           TEXT NOT NULL DEFAULT 'active',
+    updated_at       TEXT NOT NULL,
+    PRIMARY KEY (download_id, segment_index),
+    FOREIGN KEY (download_id) REFERENCES downloads(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_segments_download
+    ON download_segments(download_id);
+
+CREATE TABLE IF NOT EXISTS download_queue (
+    download_id TEXT PRIMARY KEY,
+    position    INTEGER NOT NULL,
+    state       TEXT NOT NULL DEFAULT 'waiting',
+    priority    INTEGER NOT NULL DEFAULT 1,
+    updated_at  TEXT NOT NULL,
+    FOREIGN KEY (download_id) REFERENCES downloads(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_queue_position
+    ON download_queue(position);
+
+CREATE TABLE IF NOT EXISTS download_logs (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    download_id TEXT,
+    level       TEXT NOT NULL DEFAULT 'info',
+    message     TEXT NOT NULL,
+    created_at  TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_download_logs_download
+    ON download_logs(download_id, created_at);
+"""
+
+# Columns added in schema version 2.  Declarations are constants, not user data.
+_V2_DOWNLOAD_COLUMNS = (
+    ("connections", "INTEGER NOT NULL DEFAULT 4"),
+    ("speed_limit_kbps", "INTEGER NOT NULL DEFAULT 0"),
+    ("etag", "TEXT NOT NULL DEFAULT ''"),
+    ("last_modified", "TEXT NOT NULL DEFAULT ''"),
+    ("retry_count", "INTEGER NOT NULL DEFAULT 0"),
+)
+
+# Schema version 3 records where a download came from: the browser name shown
+# in the UI and the HTTP referrer supplied by the extension.  Both are
+# informational and default to empty for downloads added in IDM itself.
+_V3_DOWNLOAD_COLUMNS = (
+    ("source_browser", "TEXT NOT NULL DEFAULT ''"),
+    ("referrer", "TEXT NOT NULL DEFAULT ''"),
+)
+
+_DOWNLOAD_COLUMNS = (
+    "id",
+    "url",
+    "filename",
+    "folder",
+    "category",
+    "priority",
+    "status",
+    "total_bytes",
+    "downloaded_bytes",
+    "speed",
+    "eta",
+    "error",
+    "content_type",
+    "range_supported",
+    "created_at",
+    "completed_at",
+    "last_try",
+    "queue_seq",
+    "connections",
+    "speed_limit_kbps",
+    "etag",
+    "last_modified",
+    "retry_count",
+    "source_browser",
+    "referrer",
+)
+
+# Fields that older callers may omit; their columns are NOT NULL.
+_DOWNLOAD_DEFAULTS = {"source_browser": "", "referrer": ""}
+
+_UPSERT_DOWNLOAD = f"""
+INSERT INTO downloads ({", ".join(_DOWNLOAD_COLUMNS)})
+VALUES ({", ".join("?" for _ in _DOWNLOAD_COLUMNS)})
+ON CONFLICT(id) DO UPDATE SET
+{", ".join(f"{column} = excluded.{column}" for column in _DOWNLOAD_COLUMNS[1:])}
+"""
+
+
+class Database:
+    """Small SQLite wrapper with settings and download-record helpers."""
+
+    def __init__(self, path: Path | None = None) -> None:
+        if path is None:
+            ensure_app_layout()
+        self.path = Path(path) if path is not None else database_file()
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._connection: sqlite3.Connection | None = sqlite3.connect(
+            str(self.path), timeout=8
+        )
+        self._connection.row_factory = sqlite3.Row
+        self._connection.execute("PRAGMA foreign_keys = ON")
+        self._migrate(self._connection)
+        logger.debug("SQLite database ready at %s", self.path)
+
+    # ------------------------------------------------------------------ migrations
+    @staticmethod
+    def _migrate(connection: sqlite3.Connection) -> None:
+        version = int(connection.execute("PRAGMA user_version").fetchone()[0])
+        try:
+            if version < 1:
+                connection.executescript(_SCHEMA_V1)
+                logger.info("Created SQLite schema version 1")
+                version = 1
+            if version < 2:
+                connection.executescript(_SCHEMA_V2)
+                existing = {
+                    row["name"]
+                    for row in connection.execute("PRAGMA table_info(downloads)")
+                }
+                for name, declaration in _V2_DOWNLOAD_COLUMNS:
+                    if name not in existing:
+                        connection.execute(
+                            f"ALTER TABLE downloads ADD COLUMN {name} {declaration}"
+                        )
+                connection.execute("PRAGMA user_version = 2")
+                connection.commit()
+                logger.info("Migrated SQLite schema to version 2")
+                version = 2
+            if version < 3:
+                existing = {
+                    row["name"]
+                    for row in connection.execute("PRAGMA table_info(downloads)")
+                }
+                for name, declaration in _V3_DOWNLOAD_COLUMNS:
+                    if name not in existing:
+                        connection.execute(
+                            f"ALTER TABLE downloads ADD COLUMN {name} {declaration}"
+                        )
+                connection.execute("PRAGMA user_version = 3")
+                connection.commit()
+                logger.info("Migrated SQLite schema to version 3")
+                version = 3
+            if version < SCHEMA_VERSION:
+                connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+                connection.commit()
+                version = SCHEMA_VERSION
+            if version > SCHEMA_VERSION:
+                logger.warning(
+                    "Database schema version %s is newer than this build (%s)",
+                    version,
+                    SCHEMA_VERSION,
+                )
+        except sqlite3.Error:
+            connection.rollback()
+            raise
+
+    # ------------------------------------------------------------------ settings
+    def setting_count(self) -> int:
+        connection = self._connection_or_raise()
+        row = connection.execute("SELECT COUNT(*) AS count FROM app_settings").fetchone()
+        return int(row["count"]) if row else 0
+
+    def load_settings(self) -> dict[str, Any]:
+        connection = self._connection_or_raise()
+        values: dict[str, Any] = {}
+        for row in connection.execute("SELECT key, value, kind FROM app_settings"):
+            try:
+                if row["kind"] == "bytes":
+                    values[row["key"]] = base64.b64decode(row["value"])
+                else:
+                    values[row["key"]] = json.loads(row["value"])
+            except (ValueError, TypeError, json.JSONDecodeError):
+                logger.warning("Ignoring unreadable setting %s", row["key"])
+        return values
+
+    def save_settings(self, values: dict[str, Any]) -> None:
+        connection = self._connection_or_raise()
+        payload: list[tuple[str, str, str]] = []
+        for key, value in values.items():
+            if isinstance(value, (bytes, bytearray)):
+                payload.append(
+                    (key, base64.b64encode(bytes(value)).decode("ascii"), "bytes")
+                )
+            else:
+                payload.append((key, json.dumps(value), "json"))
+        with connection:
+            connection.executemany(
+                """
+                INSERT INTO app_settings (key, value, kind) VALUES (?, ?, ?)
+                ON CONFLICT(key) DO UPDATE SET
+                    value = excluded.value,
+                    kind = excluded.kind
+                """,
+                payload,
+            )
+
+    def delete_setting(self, key: str) -> None:
+        connection = self._connection_or_raise()
+        with connection:
+            connection.execute("DELETE FROM app_settings WHERE key = ?", (key,))
+
+    # ------------------------------------------------------------------ downloads
+    def load_downloads(self) -> list[dict[str, Any]]:
+        connection = self._connection_or_raise()
+        rows = connection.execute(
+            "SELECT * FROM downloads ORDER BY created_at ASC, rowid ASC"
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def save_download(self, record: dict[str, Any]) -> None:
+        connection = self._connection_or_raise()
+        values = tuple(
+            record.get(column, _DOWNLOAD_DEFAULTS.get(column))
+            for column in _DOWNLOAD_COLUMNS
+        )
+        with connection:
+            connection.execute(_UPSERT_DOWNLOAD, values)
+
+    def save_downloads(self, records: list[dict[str, Any]]) -> None:
+        if not records:
+            return
+        connection = self._connection_or_raise()
+        payload = [
+            tuple(
+                record.get(column, _DOWNLOAD_DEFAULTS.get(column))
+                for column in _DOWNLOAD_COLUMNS
+            )
+            for record in records
+        ]
+        with connection:
+            connection.executemany(_UPSERT_DOWNLOAD, payload)
+
+    def delete_download(self, download_id: str) -> None:
+        connection = self._connection_or_raise()
+        with connection:
+            connection.execute("DELETE FROM downloads WHERE id = ?", (download_id,))
+            connection.execute(
+                "DELETE FROM download_segments WHERE download_id = ?", (download_id,)
+            )
+            connection.execute(
+                "DELETE FROM download_queue WHERE download_id = ?", (download_id,)
+            )
+
+    # ------------------------------------------------------------------ segments
+    def replace_segments(
+        self, download_id: str, segments: Iterable[dict[str, Any]]
+    ) -> None:
+        rows = []
+        now = datetime.now().isoformat(timespec="seconds")
+        for segment in segments:
+            try:
+                rows.append(
+                    (
+                        download_id,
+                        int(segment["index"]),
+                        int(segment["start"]),
+                        int(segment["end"]),
+                        int(segment.get("downloaded", 0)),
+                        str(segment.get("status") or "active"),
+                        now,
+                    )
+                )
+            except (KeyError, TypeError, ValueError):
+                continue
+        connection = self._connection_or_raise()
+        with connection:
+            connection.execute(
+                "DELETE FROM download_segments WHERE download_id = ?", (download_id,)
+            )
+            if rows:
+                connection.executemany(
+                    """
+                    INSERT INTO download_segments (
+                        download_id, segment_index, start_byte, end_byte,
+                        downloaded_bytes, status, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    rows,
+                )
+
+    def load_segments(self, download_id: str) -> list[dict[str, Any]]:
+        connection = self._connection_or_raise()
+        rows = connection.execute(
+            """
+            SELECT segment_index, start_byte, end_byte, downloaded_bytes, status,
+                   updated_at
+              FROM download_segments
+             WHERE download_id = ?
+             ORDER BY segment_index
+            """,
+            (download_id,),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def delete_segments(self, download_id: str) -> None:
+        connection = self._connection_or_raise()
+        with connection:
+            connection.execute(
+                "DELETE FROM download_segments WHERE download_id = ?", (download_id,)
+            )
+
+    # ------------------------------------------------------------------ queue
+    def replace_queue(self, entries: Iterable[dict[str, Any]]) -> None:
+        now = datetime.now().isoformat(timespec="seconds")
+        rows = []
+        for position, entry in enumerate(entries):
+            download_id = str(entry.get("download_id") or "")
+            if not download_id:
+                continue
+            rows.append(
+                (
+                    download_id,
+                    position,
+                    str(entry.get("state") or "waiting"),
+                    int(entry.get("priority") or 1),
+                    now,
+                )
+            )
+        connection = self._connection_or_raise()
+        with connection:
+            connection.execute("DELETE FROM download_queue")
+            if rows:
+                connection.executemany(
+                    """
+                    INSERT INTO download_queue (
+                        download_id, position, state, priority, updated_at
+                    ) VALUES (?, ?, ?, ?, ?)
+                    """,
+                    rows,
+                )
+
+    def load_queue(self) -> list[dict[str, Any]]:
+        connection = self._connection_or_raise()
+        rows = connection.execute(
+            "SELECT * FROM download_queue ORDER BY position"
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    # ------------------------------------------------------------------ logs
+    def add_download_log(
+        self, download_id: str | None, level: str, message: str
+    ) -> None:
+        connection = self._connection_or_raise()
+        with connection:
+            connection.execute(
+                """
+                INSERT INTO download_logs (download_id, level, message, created_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                (
+                    download_id,
+                    str(level or "info"),
+                    str(message or ""),
+                    datetime.now().isoformat(timespec="seconds"),
+                ),
+            )
+
+    def load_download_logs(
+        self, download_id: str | None = None, limit: int = 200
+    ) -> list[dict[str, Any]]:
+        connection = self._connection_or_raise()
+        limit = max(1, min(int(limit), 5000))
+        if download_id is None:
+            rows = connection.execute(
+                "SELECT * FROM download_logs ORDER BY id DESC LIMIT ?", (limit,)
+            ).fetchall()
+        else:
+            rows = connection.execute(
+                """
+                SELECT * FROM download_logs
+                 WHERE download_id = ?
+                 ORDER BY id DESC LIMIT ?
+                """,
+                (download_id, limit),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    # ------------------------------------------------------------------ lifecycle
+    def backup(self, destination: Path) -> Path:
+        """Write a consistent copy of the database using SQLite's online backup."""
+        connection = self._connection_or_raise()
+        destination = Path(destination)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        target = sqlite3.connect(str(destination))
+        try:
+            connection.backup(target)
+            target.commit()
+        finally:
+            target.close()
+        return destination
+
+    def close(self) -> None:
+        connection = self._connection
+        self._connection = None
+        if connection is not None:
+            try:
+                connection.close()
+            except sqlite3.Error:
+                logger.debug("Could not close the database cleanly", exc_info=True)
+
+    def _connection_or_raise(self) -> sqlite3.Connection:
+        if self._connection is None:
+            raise RuntimeError("The database connection is closed.")
+        return self._connection

@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>IDM</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <header class="hero">
+      <img class="logo" src="icons/icon48.png" alt="" />
+      <div class="hero-text">
+        <h1>IDM</h1>
+        <p>Internet Download Manager</p>
+      </div>
+      <span id="connection" class="status status-checking">Checking</span>
+    </header>
+
+    <main>
+      <div id="notice" class="notice hidden" role="status"></div>
+
+      <label class="toggle-card" for="intercept">
+        <span class="toggle-text">
+          <strong>Intercept downloads</strong>
+          <span>Send browser downloads to IDM automatically</span>
+        </span>
+        <span class="switch">
+          <input id="intercept" type="checkbox" role="switch" />
+          <span class="slider"></span>
+        </span>
+      </label>
+
+      <label class="toggle-card" for="ask-folder">
+        <span class="toggle-text">
+          <strong>Ask where to save</strong>
+          <span>Choose a folder for each browser download</span>
+        </span>
+        <span class="switch">
+          <input id="ask-folder" type="checkbox" role="switch" />
+          <span class="slider"></span>
+        </span>
+      </label>
+
+      <section class="stats" aria-label="Download statistics">
+        <div class="stat">
+          <span id="stat-active" class="stat-value">–</span>
+          <span class="stat-label">Active</span>
+        </div>
+        <div class="stat">
+          <span id="stat-queued" class="stat-value">–</span>
+          <span class="stat-label">Queued</span>
+        </div>
+        <div class="stat">
+          <span id="stat-total" class="stat-value">–</span>
+          <span class="stat-label">Total</span>
+        </div>
+      </section>
+
+      <div class="folder-row">
+        <span class="folder-label">Save to</span>
+        <code id="folder" class="folder-value" title="">—</code>
+      </div>
+
+      <section id="transfer-card" class="transfer-card hidden" aria-label="Active transfers">
+        <div class="section-head">
+          <h2>Transfers</h2>
+          <span id="idm-version" class="meta"></span>
+        </div>
+        <ul id="transfers" class="transfers"></ul>
+      </section>
+
+      <div class="actions">
+        <button id="open-idm" class="btn btn-primary" type="button">Open IDM</button>
+        <button id="open-settings" class="btn" type="button">Download Settings</button>
+        <button id="test-connection" class="btn" type="button">Test Connection</button>
+      </div>
+
+      <p id="hint" class="hint">Adds downloads to the running IDM application.</p>
+    </main>
+
+    <footer>
+      <span>Native host <span id="host-version">—</span></span>
+      <span id="last-result" class="last-result"></span>
+    </footer>
+
+    <script src="popup.js"></script>
+  </body>
+</html>

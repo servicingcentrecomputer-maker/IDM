@@ -1,0 +1,39 @@
+{
+  "manifest_version": 2,
+  "name": "IDM Integration Module",
+  "short_name": "IDM",
+  "version": "1.0.0",
+  "description": "Send downloads to Internet Download Manager with one click.",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "idm-browser-integration@idm.local",
+      "strict_min_version": "109.0"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "browser_action": {
+    "default_title": "IDM",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "background": {
+    "scripts": ["background.js"],
+    "persistent": true
+  },
+  "permissions": [
+    "nativeMessaging",
+    "downloads",
+    "menus",
+    "storage"
+  ]
+}

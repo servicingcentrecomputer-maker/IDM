@@ -1,0 +1,18 @@
+{
+  "app_name": "IDM",
+  "channel": "stable",
+  "latest_version": "1.1.0",
+  "minimum_supported_version": "1.0.0",
+  "release_date": "2026-11-15",
+  "release_notes": [
+    "EXAMPLE FILE - replace every placeholder before publishing.",
+    "This manifest is intentionally not usable for a real release.",
+    "The download URL and SHA-256 must describe the signed IDM_Setup.exe you upload.",
+    "Set the exact Authenticode signer name in Options > Updates or IDM_UPDATE_PUBLISHER.",
+    "Set manifest_signature to \"\" for an unsigned test manifest, or sign it with scripts/sign_manifest.py."
+  ],
+  "download_url": "https://updates.example.com/releases/IDM_Setup_1.1.0.exe",
+  "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "mandatory": false,
+  "manifest_signature": ""
+}

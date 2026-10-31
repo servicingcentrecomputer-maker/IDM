@@ -1,0 +1,17 @@
+{
+  "app_name": "IDM",
+  "channel": "stable",
+  "latest_version": "1.1.0",
+  "minimum_supported_version": "1.0.0",
+  "release_date": "2026-11-15",
+  "release_notes": [
+    "TEMPLATE ONLY - replace every value before publishing.",
+    "latest_version must match the signed installer that you upload.",
+    "sha256 must be the lowercase SHA-256 of that installer.",
+    "manifest_signature must be produced by scripts/sign_manifest.py when MANIFEST_PUBLIC_KEY is configured."
+  ],
+  "download_url": "https://github.com/YOUR_GITHUB_USERNAME/IDM-Update-Server/releases/download/v1.1.0/IDM_Setup_1.1.0.exe",
+  "sha256": "REPLACE_WITH_THE_64_HEX_SHA256_OF_THE_UPLOADED_INSTALLER",
+  "mandatory": false,
+  "manifest_signature": ""
+}
