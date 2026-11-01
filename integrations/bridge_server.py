@@ -92,6 +92,10 @@ class BrowserBridgeServer(QObject):
     def descriptor_path(self) -> Path:
         return self._descriptor_path
 
+    @property
+    def connection_count(self) -> int:
+        return len(self._connections)
+
     # ------------------------------------------------------------------ lifecycle
     def start(self) -> bool:
         if self.is_running:

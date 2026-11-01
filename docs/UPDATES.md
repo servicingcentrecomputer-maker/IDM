@@ -4,16 +4,15 @@ This document describes the implemented About / Check for Updates / automatic
 update system, how to configure it, how to sign and publish releases, and what
 has and has not been verified.
 
-> **Status: update checks are operational; automatic installation requires code signing.**
+> **Status: update checks and automatic installation are operational.**
 > `config.py` contains the public GitHub endpoint and an Ed25519 manifest key, so
-> packaged builds verify a signed `update/latest.json` and report new versions.
-> `EXPECTED_PUBLISHER` is intentionally empty because no CA-issued Authenticode
-> certificate exists yet. In that state IDM never runs an installer
-> automatically: it shows the update and offers a **Download Installer** button
-> that opens the GitHub release asset in the browser. Automatic installation
-> resumes on the first build released with a trusted publisher and a signed
-> installer. Source builds cannot install updates because they have no
-> `IDM_Updater.exe`; only the packaged build (`build_windows.ps1`) contains it.
+> packaged builds verify a signed `update/latest.json`, report new versions and
+> install them from **Check for Updates**. The installer is trusted because its
+> SHA-256 digest comes from the signed manifest. `EXPECTED_PUBLISHER` is still
+> empty because no CA-issued Authenticode certificate exists yet; when it is
+> configured, a matching Windows Authenticode signature is required as well.
+> Source builds cannot install updates because they have no `IDM_Updater.exe`;
+> only the packaged build (`build_windows.ps1`) contains it.
 
 ## What is implemented
 
@@ -32,9 +31,11 @@ has and has not been verified.
   non-modal notification with the version, release date and release notes.
   “Install Now” opens the normal consent flow, and “Remind Me Later” postpones
   this exact version; the next interval tick does not nag about it again. When
-  the build has no trusted publisher, the notification instead offers
-  **Download Installer**, which opens the manifest’s GitHub asset in the browser
-  and never executes anything.
+  the build has no trusted publisher, installation proceeds after verifying the
+  installer against the signed manifest and its SHA-256. If no trust anchor at
+  all is configured, the notification instead offers **Download Installer**,
+  which opens the manifest’s GitHub asset in the browser and never executes
+  anything.
 - **Optional automatic download** (off by default) fetches and verifies the
   package in the background. Installation still requires explicit approval
   unless the user has deliberately turned off “Ask before installing”.
@@ -46,9 +47,15 @@ has and has not been verified.
 - **Exact status text** for the no-update case:
   “You are using the latest version of IDM.”
 - **Update available** shows the latest and installed versions, release date,
-  mandatory note, release notes, and an **Update Now** button with a download
-  progress bar. The latest version text is also clickable and starts the same
-  installation workflow.
+  mandatory note, release notes, and an **Install Update** button with a
+  download progress bar. The latest version text is also clickable and starts
+  the same installation workflow.
+- **Reinstall / repair**: when the installed version already matches the latest
+  release and automatic installation is available, the primary button becomes
+  **Reinstall <version>**. It downloads the same verified installer, takes the
+  usual verified backup and reinstalls in place, keeping downloads, settings and
+  history. Reinstall is not offered when the installed version is newer than the
+  published release.
 - **Strict manifest validation**: unknown fields, duplicate keys, `NaN` and
   `Infinity`, wrong types, an invalid channel, a malformed date, an untrusted
   download host, non-HTTPS URLs and malformed SHA-256 values are all rejected.
@@ -57,10 +64,12 @@ has and has not been verified.
 - **Resumable download** of the installer to `%TEMP%\IDM-Update-*` with HTTP
   Range resume, retry, timeouts, redirect-chain validation, a size cap and
   cancellation.
-- **SHA-256 verification** before anything is executed; a mismatch deletes the
-  package and refuses installation.
-- **Windows Authenticode verification** with an exact signer-name match. Both
-  IDM and the standalone updater verify the package again before installing.
+- **SHA-256 verification** against the Ed25519-signed manifest before anything
+  is executed; a mismatch deletes the package and refuses installation. Both IDM
+  and the standalone updater verify the package again before installing.
+- **Optional Windows Authenticode verification** with an exact signer-name
+  match. It is enforced whenever `EXPECTED_PUBLISHER` is configured; without a
+  publisher, the signed-manifest SHA-256 remains the trust anchor.
 - **Separate updater executable** (`IDM_Updater.exe`) copied into the temporary
   update folder so it does not lock files in the installation directory. It
   waits for IDM to exit (without killing it), re-verifies the package, runs the
@@ -83,10 +92,10 @@ has and has not been verified.
   backed up, and user data remains under `%APPDATA%\IDM Download Manager`.
 - **Update history** records started, succeeded, failed and rolled-back events
   in `update-history.json`, with a bounded number of entries.
-- **No fake operations**: if the endpoint, publisher, manifest key or updater
-  component is missing, the UI explains exactly what is missing. Missing
-  publisher verification switches to manual download; it never installs an
-  unverified package.
+- **No fake operations**: if the endpoint, manifest key, publisher (when one is
+  configured) or updater component is missing, the UI explains exactly what is
+  missing. Without any trust anchor the UI switches to manual download; it
+  never installs an unverified package.
 
 ## Central configuration
 
@@ -102,8 +111,8 @@ trust anchors are declared. No update URL is hardcoded in another module.
 | `UPDATE_MANIFEST_URL` | Derived public HTTPS URL. Empty while `GITHUB_OWNER` is empty, which produces the “not configured” state instead of contacting a fake server. |
 | `ALLOWED_MANIFEST_HOSTS` | `raw.githubusercontent.com`, `github.com`, `api.github.com`. |
 | `ALLOWED_DOWNLOAD_HOSTS` | `github.com` plus the GitHub asset CDN hosts `objects.githubusercontent.com` and `release-assets.githubusercontent.com`. |
-| `EXPECTED_PUBLISHER` | **Empty in 3.0.0.** No CA-issued Authenticode certificate exists yet, so automatic installation stays disabled and the UI offers manual download. Set the exact signer name when a certificate is available. |
-| `MANIFEST_PUBLIC_KEY` | Base64 Ed25519 public key embedded in 3.0.0; every manifest must be signed with the matching private key, which is kept outside this repository. |
+| `EXPECTED_PUBLISHER` | **Empty in 3.5.0.** No CA-issued Authenticode certificate exists yet, so installation trusts the Ed25519-signed manifest and SHA-256 only. Set the exact signer name when a certificate is available to require Authenticode as well. |
+| `MANIFEST_PUBLIC_KEY` | Base64 Ed25519 public key embedded in 3.5.0; every manifest must be signed with the matching private key, which is kept outside this repository. |
 | `UPDATE_CHANNEL` | Default channel: `stable` or `beta`. |
 | `UPDATE_CONNECT_TIMEOUT`, `UPDATE_READ_TIMEOUT` | 10 s connect, 30 s read. |
 | `UPDATE_MAX_MANIFEST_BYTES`, `UPDATE_MAX_INSTALLER_BYTES` | 512 KiB and 512 MiB. |
@@ -124,7 +133,7 @@ store or environment variables only.
 | Download new versions automatically | Off | Downloads and verifies the package in the background after a check. Never installs it by itself. |
 | Ask before installing an update | On | Shows the confirmation dialog before an install. Turning this off is an explicit user choice; the default is to always ask. |
 | Update server (manifest URL) | Empty | HTTPS URL of `latest.json`. Leave blank to use the value derived in `config.py`. |
-| Trusted publisher | Empty | Exact Authenticode signer name or full certificate subject. Required to install. |
+| Trusted publisher | Empty | Exact Authenticode signer name or full certificate subject. When set, a matching signature is required to install; otherwise the signed manifest and SHA-256 are the trust anchor. |
 | Update channel | Stable | `Stable releases` or `Beta releases`. |
 
 The same page shows the installed version, channel, last check time, last
@@ -141,7 +150,7 @@ which is useful for managed deployments and testing:
 | Variable | Purpose |
 | --- | --- |
 | `IDM_UPDATE_MANIFEST_URL` | Manifest endpoint. |
-| `IDM_UPDATE_PUBLISHER` | Exact signer name that must match the installer signature. |
+| `IDM_UPDATE_PUBLISHER` | Exact signer name that must match the installer signature when Authenticode is configured. |
 | `IDM_UPDATE_CHANNEL` | `stable` or `beta` (case-insensitive). |
 | `IDM_UPDATE_MANIFEST_PUBLIC_KEY` | Base64 Ed25519 public key; enables mandatory manifest signature verification. |
 | `IDM_UPDATE_TRUSTED_HOSTS` | Extra comma/semicolon-separated download hosts, for example a CDN. |
@@ -150,25 +159,37 @@ The manifest host is always trusted automatically. GitHub-hosted manifests also
 trust the standard GitHub release-asset CDN hosts. Every other download host must
 be listed in `ALLOWED_DOWNLOAD_HOSTS` or `IDM_UPDATE_TRUSTED_HOSTS`.
 
-The publisher is **not** optional for automatic installation. A check can run
-without it, but **Update Now** refuses to download and install until a publisher
-is configured.
+A publisher is not required for automatic installation. IDM needs at least one
+trust anchor: the Ed25519 manifest public key (present in the 3.5.0 build) or an
+Authenticode publisher. With only the manifest key, the installer is accepted
+when its SHA-256 matches the signed manifest. With a publisher configured, a
+valid Authenticode signature from that exact signer is also required.
 
-### Unsigned builds: manual download
+### Unsigned installers: SHA-256 trust
 
-When the endpoint is configured but `EXPECTED_PUBLISHER` is empty (the 3.0.0
-state), IDM:
+When the endpoint and manifest key are configured but `EXPECTED_PUBLISHER` is
+empty (the 3.5.0 state), IDM:
 
 - verifies the signed manifest and reports the available version normally;
-- replaces **Update Now** with **Download Installer**, which opens the
-  manifest’s HTTPS GitHub asset in the default browser (`QDesktopServices`);
-- shows the same manual option in the update notification and skips the
-  optional automatic download;
-- never downloads, verifies or executes the package itself.
+- downloads the installer, checks it against the manifest’s SHA-256 digest and
+  then runs it through `IDM_Updater.exe` after explicit consent;
+- tells the user in the status area and confirmation dialog that the installer
+  is not Authenticode-signed;
+- keeps **Download Installer** available as a manual alternative.
 
-This is a deliberate safe degradation, not a bypass: automatic installation
-returns as soon as a build embeds a trusted publisher and ships signed
-installers. The manifest itself remains Ed25519-verified in every case.
+The same trust path is used for **Reinstall <version>** when the latest release
+is already installed: the installer is downloaded and SHA-256-verified against
+the signed manifest, a verified backup is taken, and the same version is
+reinstalled in place. A reinstall writes pending-update state with a reinstall
+flag and does not create a rollback plan, because restoring the same version
+would be meaningless; the pre-update database backup is still available for
+startup recovery. The updater records the installer exit code in
+`last-install-result.json`, so a cancelled or failed reinstall is reported as
+incomplete instead of a false success.
+
+The manifest remains Ed25519-verified, so an attacker cannot change the expected
+hash without the offline signing key. Configure a publisher when a CA-issued
+code-signing certificate becomes available to add Authenticode on top of that.
 
 ### Safe defaults
 
@@ -186,14 +207,14 @@ The client accepts exactly these fields; anything else is an error.
 {
   "app_name": "IDM",
   "channel": "stable",
-  "latest_version": "3.0.0",
+  "latest_version": "3.5.0",
   "minimum_supported_version": "1.0.0",
   "release_date": "2026-11-01",
   "release_notes": [
     "Update endpoint and signed manifest configured",
     "Manual download when no code-signing certificate is available"
   ],
-  "download_url": "https://github.com/servicingcentrecomputer-maker/IDM/releases/download/v3.0.0/IDM-Setup-3.0.0.exe",
+  "download_url": "https://github.com/servicingcentrecomputer-maker/IDM/releases/download/v3.5.0/IDM-Setup-3.5.0.exe",
   "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
   "package_size": 73400320,
   "mandatory": false,
@@ -246,7 +267,7 @@ compromised. SHA-256 alone is not trusted when a key is configured.
      --private-key C:\Users\<you>\.idm-signing\manifest-private.pem
    ```
 
-   The private key used for 3.0.0 is kept outside the repository at
+   The private key used for 3.5.0 is kept outside the repository at
    `C:\Users\<you>\.idm-signing\manifest-private.pem`; back it up securely and
    never commit it. `scripts/build_release.ps1` can sign and publish a manifest
    in a separate update-server checkout when `MANIFEST_PUBLIC_KEY` is set and
@@ -333,8 +354,9 @@ server-side walkthrough, Windows 10/11 deployment and diagnostics.
 
 ## Code signing
 
-Automatic installation is designed around a code-signing certificate. An
-unsigned installer is correctly refused with:
+Code signing is recommended in addition to the signed manifest. When
+`EXPECTED_PUBLISHER` is set, an installer that fails verification is refused
+with:
 
 > The installer does not have a valid Windows Authenticode signature.
 
@@ -513,10 +535,10 @@ Background scheduler / Help → Check for Updates
       ├─ schema / channel / signature validation
       ├─ no update → "You are using the latest version of IDM."
       └─ update → notification (Install Now / Remind Me Later)
-                    └─ About/update window: release notes + Update Now
+                    └─ About/update window: release notes + Install Update
                         └─ confirmation (restart checkbox, default Cancel)
                             └─ download to %TEMP%\IDM-Update-* (Range resume)
-                                └─ SHA-256 + Authenticode verification
+                                └─ SHA-256 verification (and Authenticode when configured)
                                     └─ verified backup (DB, settings, history,
                                        queue, browser config, update config)
                                         └─ cache installer + write rollback plan
@@ -659,16 +681,18 @@ an installation.
 
 To exercise the real signature path on a Windows development machine, build an
 unsigned installer and configure the trusted publisher; the update must be
-refused with a signature error, which is the expected safe result. A successful
-end-to-end update requires signing as described above.
+refused with a signature error, which is the expected safe result. With no
+publisher configured, the same unsigned installer installs only when it matches
+the SHA-256 digest in the signed manifest.
 
 ## Troubleshooting
 
 | Symptom | Cause / fix |
 | --- | --- |
 | “Updates are not configured.” | The build has no manifest URL. Set `GITHUB_OWNER` in `config.py`, the manifest URL in Options → Updates, or `IDM_UPDATE_MANIFEST_URL`. |
-| “No trusted update publisher is configured.” | Expected in the unsigned 3.0.0 build. Use **Download Installer** and run the setup manually; configure a publisher only after obtaining a CA-issued code-signing certificate. |
-| **Download Installer** opens the browser | Expected when no trusted publisher is embedded. IDM never downloads or runs the installer automatically in that state. |
+| “Automatic installation needs a trusted update signature.” | Configure a manifest public key or an Authenticode publisher. |
+| **Download Installer** opens the browser | Expected only when neither a manifest public key nor a publisher is configured. IDM never runs an installer without a trust anchor. |
+| The installer is not Authenticode-signed | Expected in the unsigned 3.5.0 build. IDM verified it against the signed manifest and SHA-256; configure a publisher after obtaining a CA-issued certificate. |
 | “The Updater component is missing.” | You are running from source or a broken install. Use the packaged build/reinstall. |
 | “The update server returned HTTP 404 …” | The manifest URL is wrong or the release was not published. |
 | “The download host … is not trusted.” | Put the installer on a GitHub release or add the CDN host with `IDM_UPDATE_TRUSTED_HOSTS`. |
@@ -678,7 +702,7 @@ end-to-end update requires signing as described above.
 | “The update manifest signature is invalid.” | The manifest changed after signing or was signed with a different key. Re-sign the exact bytes. |
 | “MANIFEST_PUBLIC_KEY must decode to exactly 32 …” | Use the base64 public key printed by `sign_manifest.py keygen`. |
 | “failed SHA-256 verification” | The manifest hash does not match the uploaded installer. Recompute it; do not bypass. |
-| “does not have a valid Windows Authenticode signature” | Sign the installer and upload the signed file. |
+| “does not have a valid Windows Authenticode signature” | A publisher is configured but the installer is unsigned. Sign the installer or clear the publisher to rely on the signed manifest and SHA-256. |
 | “was signed by X, not the configured publisher Y” | Use the exact signer name reported by `Get-AuthenticodeSignature`. |
 | Update folder remains in `%TEMP%` | The updater’s own executable was locked during cleanup. It is removed on the next IDM start once older than the marked/stale threshold. |
 | Installer shows UAC | Expected for an all-users installation. IDM never bypasses UAC. |
@@ -693,12 +717,13 @@ end-to-end update requires signing as described above.
   is treated as a version mismatch rather than a success.
 - The update server must be publicly reachable over HTTPS; private tokens and
   authenticated endpoints are not supported.
-- A signed release requires a code-signing certificate and a manually controlled
-  signing step; the build script does not hold signing secrets.
-- The 3.0.0 build is unsigned. Automatic installation stays disabled until a
-  CA-issued certificate is configured and a signed build is published; update
-  checks and signed manifests work today.
-- Authenticode verification is Windows-specific. Other platforms are not
-  supported for installation.
+- An Authenticode-signed release requires a code-signing certificate and a
+  manually controlled signing step; the build script does not hold signing
+  secrets.
+- The 3.5.0 build is unsigned. Automatic installation trusts the Ed25519-signed
+  manifest and SHA-256; Authenticode is added when a CA-issued certificate and
+  publisher are configured.
+- Authenticode verification and installation are Windows-specific. Other
+  platforms are not supported for installation.
 - Windows 11 is the tested platform. The code and installer target Windows 10
   as well, but Windows 10 was not available for end-to-end verification.

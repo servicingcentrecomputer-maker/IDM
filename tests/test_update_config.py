@@ -101,25 +101,60 @@ def test_normalize_channel_rejects_unknown_values(value):
         normalize_channel(value)
 
 
-def test_config_requires_endpoint_and_publisher():
+def test_config_requires_endpoint():
     config = UpdateConfig(manifest_url="", expected_publisher="", trusted_hosts=())
     with pytest.raises(UpdateConfigurationError, match="No update server"):
         config.require_endpoint()
-    with pytest.raises(UpdateConfigurationError, match="publisher"):
-        config.require_publisher()
 
 
-def test_installation_supported_needs_endpoint_and_publisher():
+def test_install_trust_accepts_publisher_or_manifest_key():
+    for config in (
+        UpdateConfig(
+            manifest_url="https://updates.example.com/latest.json",
+            expected_publisher="IDM",
+            trusted_hosts=(),
+        ),
+        UpdateConfig(
+            manifest_url="https://updates.example.com/latest.json",
+            expected_publisher="",
+            trusted_hosts=(),
+            manifest_public_key="key",
+        ),
+    ):
+        config.require_install_trust()
+
+
+def test_install_trust_requires_a_trust_anchor():
+    config = UpdateConfig(
+        manifest_url="https://updates.example.com/latest.json",
+        expected_publisher="",
+        trusted_hosts=(),
+        manifest_public_key="",
+    )
+    with pytest.raises(UpdateConfigurationError, match="trusted update signature"):
+        config.require_install_trust()
+
+
+def test_installation_supported_needs_endpoint_and_a_trust_anchor():
     assert UpdateConfig(
         manifest_url="https://updates.example.com/latest.json",
         expected_publisher="IDM",
         trusted_hosts=(),
     ).installation_supported
+    assert UpdateConfig(
+        manifest_url="https://updates.example.com/latest.json",
+        expected_publisher="",
+        trusted_hosts=(),
+        manifest_public_key="key",
+    ).installation_supported
     assert not UpdateConfig(
         manifest_url="https://updates.example.com/latest.json",
         expected_publisher="",
         trusted_hosts=(),
+        manifest_public_key="",
     ).installation_supported
     assert not UpdateConfig(
-        manifest_url="", expected_publisher="IDM", trusted_hosts=()
+        manifest_url="",
+        expected_publisher="IDM",
+        trusted_hosts=(),
     ).installation_supported

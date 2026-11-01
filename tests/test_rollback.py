@@ -146,21 +146,22 @@ def test_rollback_plan_with_installer_round_trip(tmp_path, backup):
     validate_plan(loaded)
 
 
-def test_rollback_plan_rejects_missing_publisher(tmp_path, backup):
+def test_rollback_plan_accepts_sha256_only_installer(tmp_path, backup):
     installer = _installer(tmp_path)
-    with pytest.raises(RollbackError):
-        build_rollback_plan(
-            from_version="1.0.0",
-            target_version="1.1.0",
-            backup_dir=backup.directory,
-            db_backup=backup.database,
-            previous_installer=installer,
-            previous_installer_sha256=sha256_file(installer),
-            previous_publisher="",
-            binary_snapshot=None,
-            app_exe=tmp_path / "app" / "IDM.exe",
-            log_file=tmp_path / "updater.log",
-        )
+    plan = build_rollback_plan(
+        from_version="1.0.0",
+        target_version="1.1.0",
+        backup_dir=backup.directory,
+        db_backup=backup.database,
+        previous_installer=installer,
+        previous_installer_sha256=sha256_file(installer),
+        previous_publisher="",
+        binary_snapshot=None,
+        app_exe=tmp_path / "app" / "IDM.exe",
+        log_file=tmp_path / "updater.log",
+    )
+    assert plan.previous_publisher == ""
+    validate_plan(plan)
 
 
 def test_rollback_plan_rejects_wrong_installer_hash(tmp_path, backup):

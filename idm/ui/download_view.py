@@ -16,6 +16,8 @@ from PySide6.QtWidgets import (
 )
 
 from ..models.table_model import (
+    COLUMN_CATEGORY,
+    COLUMN_COUNT,
     COLUMN_ETA,
     COLUMN_LAST_TRY,
     COLUMN_NAME,
@@ -54,12 +56,12 @@ class DownloadTable(QTableView):
 
         vertical = self.verticalHeader()
         vertical.setVisible(False)
-        vertical.setDefaultSectionSize(52)
-        vertical.setMinimumSectionSize(48)
+        vertical.setDefaultSectionSize(64)
+        vertical.setMinimumSectionSize(56)
         vertical.setSectionResizeMode(QHeaderView.ResizeMode.Fixed)
 
         horizontal = self.horizontalHeader()
-        horizontal.setFixedHeight(34)
+        horizontal.setFixedHeight(38)
         horizontal.setHighlightSections(False)
         horizontal.setSectionsClickable(True)
         horizontal.setSortIndicatorShown(False)
@@ -71,7 +73,13 @@ class DownloadTable(QTableView):
         self.setItemDelegateForColumn(COLUMN_NAME, NameDelegate(theme, self))
         self.setItemDelegateForColumn(COLUMN_STATUS, StatusDelegate(theme, self))
         value_delegate = ValueDelegate(theme, self)
-        for column in (COLUMN_SIZE, COLUMN_ETA, COLUMN_SPEED, COLUMN_LAST_TRY):
+        for column in (
+            COLUMN_SIZE,
+            COLUMN_CATEGORY,
+            COLUMN_ETA,
+            COLUMN_SPEED,
+            COLUMN_LAST_TRY,
+        ):
             self.setItemDelegateForColumn(column, value_delegate)
 
         theme.changed.connect(self.viewport().update)
@@ -81,8 +89,9 @@ class DownloadTable(QTableView):
         header = self.horizontalHeader()
         header.setSectionResizeMode(COLUMN_NAME, QHeaderView.ResizeMode.Stretch)
         widths = {
-            COLUMN_SIZE: 90,
-            COLUMN_STATUS: 118,
+            COLUMN_SIZE: 92,
+            COLUMN_CATEGORY: 104,
+            COLUMN_STATUS: 124,
             COLUMN_ETA: 100,
             COLUMN_SPEED: 112,
             COLUMN_LAST_TRY: 132,
@@ -94,7 +103,7 @@ class DownloadTable(QTableView):
             model.sort(self._sort_column, self._sort_order)
 
     def _on_header_clicked(self, column: int) -> None:
-        if not 0 <= column < 6:
+        if not 0 <= column < COLUMN_COUNT:
             return
         if self._sorted and column == self._sort_column:
             order = (

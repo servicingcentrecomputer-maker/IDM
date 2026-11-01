@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 
 from integrations.browser_registry import CHROME_EXTENSION_ID
+from idm.version import CURRENT_VERSION
 from scripts import package_video_assistant as video_packaging
 from scripts.package_extensions import extension_id_from_key
 
@@ -50,7 +51,7 @@ def test_manifest_is_minimal_mv3() -> None:
     manifest = _manifest()
     assert manifest["manifest_version"] == 3
     assert manifest["name"] == "IDM Video Assistant"
-    assert manifest["version"] == "3.0.0"
+    assert manifest["version"] == CURRENT_VERSION
     assert manifest["background"] == {"service_worker": "background.js"}
     assert manifest["action"]["default_popup"] == "popup.html"
     assert extension_id_from_key(manifest["key"]) == CHROME_EXTENSION_ID

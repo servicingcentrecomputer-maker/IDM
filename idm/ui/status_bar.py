@@ -18,14 +18,14 @@ class StatusBar(QFrame):
         self._speed = 0.0
         self._queued = 0
         self.setObjectName("StatusBar")
-        self.setFixedHeight(28)
+        self.setFixedHeight(30)
 
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(12, 0, 12, 0)
-        layout.setSpacing(7)
+        layout.setContentsMargins(16, 0, 16, 0)
+        layout.setSpacing(9)
 
         self._dot = QLabel()
-        self._dot.setFixedSize(7, 7)
+        self._dot.setFixedSize(8, 8)
         layout.addWidget(self._dot, 0, Qt.AlignmentFlag.AlignVCenter)
 
         self._activity = QLabel("Ready")

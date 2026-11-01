@@ -130,11 +130,19 @@ def test_verify_installer_rejects_invalid_signature_status(tmp_path):
         )
 
 
-def test_verify_installer_requires_expected_publisher(tmp_path):
+def test_verify_installer_without_publisher_uses_sha256_only(tmp_path):
     data = b"MZ" + b"data" * 20
     path = _write_exe(tmp_path, data)
-    with pytest.raises(SignatureVerificationError, match="No trusted publisher"):
-        verify_installer(path, sha256_bytes(data), "", signature_runner=_valid_runner())
+    calls: list = []
+    result = verify_installer(
+        path,
+        sha256_bytes(data),
+        "",
+        signature_runner=lambda file_path: calls.append(file_path),
+    )
+    assert result.publisher == ""
+    assert result.sha256 == sha256_bytes(data)
+    assert calls == []
 
 
 def test_verify_installer_wraps_runner_failure(tmp_path):

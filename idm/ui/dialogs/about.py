@@ -70,9 +70,9 @@ class AboutDialog(BaseDialog):
         text_box.addWidget(tagline)
         text_box.addSpacing(4)
         description = QLabel(
-            "A compact, classic download manager built with Python and Qt. "
-            "HTTP and HTTPS links, resumable transfers, queues, schedules and "
-            "three interface themes."
+            "A modern download manager built with Python and Qt. HTTPS "
+            "transfers, resumable downloads, queues, schedules and classic, "
+            "light, dark and system themes."
         )
         description.setWordWrap(True)
         description.setObjectName("HintLabel")

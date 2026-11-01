@@ -70,7 +70,11 @@ def finalize_startup(
 
     pending = outcome.pending
     if outcome.status == "succeeded":
-        message = f"IDM {pending.target_version} was installed successfully."
+        message = (
+            f"IDM {pending.target_version} was reinstalled successfully."
+            if pending.reinstall
+            else f"IDM {pending.target_version} was installed successfully."
+        )
         if database_restored:
             message += " The pre-update database backup was restored during startup."
         return StartupReport(
@@ -78,7 +82,9 @@ def finalize_startup(
         )
 
     message = outcome.message or (
-        f"The update to IDM {pending.target_version} did not finish."
+        f"The reinstall of IDM {pending.target_version} did not finish."
+        if pending.reinstall
+        else f"The update to IDM {pending.target_version} did not finish."
     )
     if database_restored:
         message += " The pre-update database backup was restored during startup."

@@ -203,15 +203,26 @@ class PerformancePage(QWidget):
             ("Network recovery", self._network_check, ""),
         )
         for row, (title, widget, hint) in enumerate(rows):
+            text_box = QVBoxLayout()
+            text_box.setContentsMargins(0, 0, 0, 0)
+            text_box.setSpacing(2)
             label = QLabel(title)
             label.setObjectName("SettingTitle")
-            grid.addWidget(label, row, 0)
+            text_box.addWidget(label)
             if hint:
                 detail = QLabel(hint)
                 detail.setObjectName("SettingHint")
-                grid.addWidget(detail, row, 1)
-            grid.addWidget(widget, row, 2)
-        grid.setColumnStretch(2, 1)
+                text_box.addWidget(detail)
+            grid.addLayout(text_box, row, 0)
+            if isinstance(widget, QSpinBox):
+                widget.setFixedWidth(210)
+            grid.addWidget(
+                widget,
+                row,
+                1,
+                Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+            )
+        grid.setColumnStretch(0, 1)
         tuning.add_layout(grid)
 
         buttons = QHBoxLayout()

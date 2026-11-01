@@ -3,9 +3,9 @@
 Responsibilities:
 
 * validate the handoff written by IDM
-* re-verify the installer's SHA-256 and Authenticode signature
+* re-verify the installer's SHA-256 and, when configured, Authenticode signature
 * wait for IDM to close
-* run the signed Inno Setup installer (UAC is left to Windows)
+* run the Inno Setup installer (UAC is left to Windows)
 * restart IDM when requested
 * remove only its own temporary update directory
 * restore the previous version (``--rollback``) from a verified installer or
@@ -23,6 +23,7 @@ import logging
 import os
 import subprocess
 import sys
+from datetime import datetime, timezone
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
@@ -42,7 +43,12 @@ from .rollback import (
     read_rollback_plan,
     restore_binary_snapshot,
 )
-from .state import clear_pending_update, record_event
+from .state import (
+    InstallResult,
+    clear_pending_update,
+    record_event,
+    write_install_result,
+)
 
 logger = logging.getLogger("idm.updater")
 
@@ -130,16 +136,25 @@ def run_update(
     restart_app=None,
     cleanup=None,
     notify=None,
+    result_writer=None,
 ) -> int:
     wait = wait_for_parent or _wait_for_process
     run_installer = installer_runner or _run_installer
     restart = restart_app or _restart_app
     remove_directory = cleanup or safe_remove_update_dir
     message = notify or _notify
+    record_result = result_writer or _write_install_result
+
+    def safe_record_result(exit_code: int) -> None:
+        try:
+            record_result(handoff, exit_code)
+        except Exception:
+            logger.warning("Could not record the installer result", exc_info=True)
 
     logger.info("Waiting for IDM to close")
     if not wait(handoff.parent_pid, handoff.app_exe, _WAIT_TIMEOUT_SECONDS):
         logger.error("IDM did not close; the installer was not launched")
+        safe_record_result(3)
         message(
             "IDM Update",
             "IDM did not close, so the update was not installed. "
@@ -157,6 +172,7 @@ def run_update(
         )
     except SignatureVerificationError as exc:
         logger.error("Package verification failed: %s", exc)
+        safe_record_result(4)
         message(
             "IDM Update",
             "The update package failed security verification and was not "
@@ -166,9 +182,11 @@ def run_update(
         return 4
 
     logger.info(
-        "Installer verified (%s bytes, publisher %s)",
+        "Installer verified (%s bytes, %s)",
         verified.size,
-        verified.publisher,
+        f"publisher {verified.publisher}"
+        if verified.publisher
+        else "SHA-256 only",
     )
     args = installer_arguments(
         handoff.app_exe, handoff.update_dir / "installer-install.log"
@@ -177,6 +195,7 @@ def run_update(
     logger.info("Launching installer (scope=%s)", "machine" if "/ALLUSERS" in args else "user")
     exit_code = run_installer(command)
     logger.info("Installer exited with code %s", exit_code)
+    safe_record_result(exit_code)
 
     if exit_code == 0:
         removed = remove_directory(handoff.update_dir)
@@ -260,9 +279,11 @@ def run_rollback(
             )
             return 4
         logger.info(
-            "Rollback installer verified (%s bytes, publisher %s)",
+            "Rollback installer verified (%s bytes, %s)",
             verified.size,
-            verified.publisher,
+            f"publisher {verified.publisher}"
+            if verified.publisher
+            else "SHA-256 only",
         )
         command = [
             str(installer),
@@ -361,6 +382,18 @@ def machine_wide_install(app_exe: Path) -> bool:
         except (ValueError, OSError):
             continue
     return False
+
+
+def _write_install_result(handoff: UpdateHandoff, exit_code: int) -> None:
+    write_install_result(
+        InstallResult(
+            target_version=handoff.target_version,
+            success=exit_code == 0,
+            exit_code=int(exit_code),
+            reinstall=bool(handoff.reinstall),
+            completed_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        )
+    )
 
 
 def _installer_error_text(exit_code: int) -> str:

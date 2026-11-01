@@ -128,9 +128,18 @@ def verify_installer(
             "The installer failed SHA-256 verification and will not be installed."
         )
 
-    info = verify_authenticode(
-        path, expected_publisher, runner=signature_runner
-    )
+    expected = (expected_publisher or "").strip().strip('"')
+    if not expected:
+        logger.info(
+            "Installer verified against the signed manifest SHA-256 only "
+            "(no Authenticode publisher configured): %s",
+            digest,
+        )
+        return VerifiedInstaller(
+            path=Path(path), sha256=digest, size=size, publisher=""
+        )
+
+    info = verify_authenticode(path, expected, runner=signature_runner)
     logger.info(
         "Installer signature verified (publisher=%s, sha256=%s)",
         info.simple_name or info.subject,

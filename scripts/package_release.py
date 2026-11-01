@@ -15,7 +15,7 @@ then writes a versioned directory and a deterministic ZIP::
         browser-extensions\\...
         docs\\...
         README.txt
-        RELEASE_NOTES.md
+        ReleaseNotes.md
         VERSION.json
         SHA256SUMS.txt
     release\\IDM-<version>-win64.zip
@@ -49,6 +49,9 @@ EXTENSION_PACKAGES = {
 DOCUMENTS = {
     "README.md": "README.md",
     "PACKAGING.md": "PACKAGING.md",
+    "CHANGELOG.md": "CHANGELOG.md",
+    "UI-Design-System.md": "UI-Design-System.md",
+    "TestingReport.md": "TestingReport.md",
     "docs/BROWSER_INTEGRATION.md": "BROWSER_INTEGRATION.md",
     "docs/BROWSER_STORE_PUBLISHING.md": "BROWSER_STORE_PUBLISHING.md",
     "docs/UPDATES.md": "UPDATES.md",
@@ -257,7 +260,7 @@ def write_readme(package_dir: Path, version: str, include_installer: bool, inclu
         f"  {'browser-extensions\\':<30}Chrome, Edge and Firefox packages",
         f"  {'BrowserExtension\\IDMVideoAssistant\\':<30}Unpacked IDM Video Assistant",
         f"  {'docs\\':<30}Full documentation",
-        f"  {'RELEASE_NOTES.md':<30}What changed in this release",
+        f"  {'ReleaseNotes.md':<30}What changed in this release",
         f"  {'VERSION.json':<30}Component versions and build metadata",
         f"  {'SHA256SUMS.txt':<30}SHA-256 digest for every packaged file",
         "",
@@ -438,7 +441,7 @@ def build_release(
     }
 
     copy_documents(root, package_dir)
-    shutil.copy2(root / "RELEASE_NOTES.md", package_dir / "RELEASE_NOTES.md")
+    shutil.copy2(root / "ReleaseNotes.md", package_dir / "ReleaseNotes.md")
     write_readme(package_dir, version, include_installer, include_portable)
 
     metadata = {

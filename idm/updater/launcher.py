@@ -39,6 +39,7 @@ class InstallRequest:
     update_dir: Path
     restart: bool
     manifest: object | None = None
+    reinstall: bool = False
 
 
 def updater_executable() -> Path | None:
@@ -107,6 +108,7 @@ def build_handoff(
         restart=bool(request.restart),
         update_dir=Path(request.update_dir),
         log_file=Path(log_file),
+        reinstall=bool(request.reinstall),
     )
 
 

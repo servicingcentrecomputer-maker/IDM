@@ -97,6 +97,8 @@ class LinkLabel(QLabel):
 
 class UpdatePanel(QWidget):
     installation_started = Signal()
+    result_changed = Signal(object)
+    check_failed = Signal(str)
 
     def __init__(
         self,
@@ -211,6 +213,19 @@ class UpdatePanel(QWidget):
         )
         self._check_button.clicked.connect(self.check_for_updates)
         buttons.addWidget(self._check_button)
+        self._update_button = primary_button("Install Update")
+        self._update_button.setIcon(icons.icon("download", "#FFFFFF", 16))
+        self._update_button.setEnabled(False)
+        self._update_button.setToolTip("Check for updates to enable installation")
+        self._update_button.clicked.connect(self._update_action)
+        buttons.addWidget(self._update_button)
+        self._download_button = secondary_button("Download Installer")
+        self._download_button.setIcon(
+            icons.icon("download", self._theme.palette.text_muted, 16)
+        )
+        self._download_button.clicked.connect(self._open_manual_download)
+        self._download_button.hide()
+        buttons.addWidget(self._download_button)
         buttons.addStretch(1)
         self._cancel_button = secondary_button("Cancel")
         self._cancel_button.hide()
@@ -220,11 +235,6 @@ class UpdatePanel(QWidget):
         self._retry_button.hide()
         self._retry_button.clicked.connect(self._retry)
         buttons.addWidget(self._retry_button)
-        self._update_button = primary_button("Update Now")
-        self._update_button.setIcon(icons.icon("download", "#FFFFFF", 16))
-        self._update_button.hide()
-        self._update_button.clicked.connect(self._update_action)
-        buttons.addWidget(self._update_button)
         layout.addLayout(buttons)
 
         root = QVBoxLayout(self)
@@ -285,7 +295,12 @@ class UpdatePanel(QWidget):
             self._latest_value.set_link_enabled(False)
             self._release_date.clear()
             self._mandatory_label.hide()
-            self._update_button.hide()
+            self._update_button.setText("Install Update")
+            self._update_button.setEnabled(False)
+            self._update_button.setToolTip(
+                "Check for updates to enable installation"
+            )
+            self._download_button.hide()
             self._retry_button.hide()
             self._progress.hide()
             self._progress_text.hide()
@@ -297,7 +312,10 @@ class UpdatePanel(QWidget):
         self._result = None
         self._prepared = None
         self._confirmed_install = False
-        self._update_button.hide()
+        self._update_button.setText("Install Update")
+        self._update_button.setEnabled(False)
+        self._update_button.setToolTip("Checking for updates…")
+        self._download_button.hide()
         self._retry_button.hide()
         self._cancel_button.hide()
         self._check_button.setEnabled(False)
@@ -332,6 +350,11 @@ class UpdatePanel(QWidget):
     # ------------------------------------------------------------------ check
     def _on_check_succeeded(self, result: UpdateCheckResult) -> None:
         self._busy = False
+        try:
+            self._settings.note_update_check()
+        except Exception:
+            logger.debug("Could not record the update check time", exc_info=True)
+        self.result_changed.emit(result)
         self._check_button.setEnabled(True)
         self._progress.hide()
         self._progress_text.hide()
@@ -346,7 +369,7 @@ class UpdatePanel(QWidget):
         if getattr(manifest, "package_size", None):
             release_text += f"  ·  {format_size(int(manifest.package_size))}"
         self._release_date.setText(release_text)
-        self._update_button.setText("Update Now")
+        self._update_button.setText("Install Update")
         self._mandatory_label.setVisible(result.update_available and result.mandatory)
         self._notes_label.setText(
             f"RELEASE NOTES — VERSION {result.latest_version}"
@@ -358,53 +381,105 @@ class UpdatePanel(QWidget):
         self._notes.show()
 
         if result.update_available:
+            self._download_button.hide()
             self._latest_value.set_link_enabled(True)
             if self._manual_download:
-                self._update_button.setText("Download Installer")
+                self._update_button.setToolTip(
+                    "Automatic installation is disabled; opens the official "
+                    "installer download"
+                )
                 self._set_status(
                     "New version available. Automatic installation is disabled.",
                     "warn",
                 )
-                self._detail.setText(
+                self._set_detail(
                     f"Download IDM {result.latest_version} from GitHub and run "
-                    "the installer manually. Automatic installation requires a "
-                    "build signed with a trusted code-signing certificate."
+                    "the installer manually. Configure the manifest public key "
+                    "or an Authenticode publisher to enable automatic "
+                    "installation.",
+                    "info",
                 )
-                self._detail.show()
             else:
+                self._update_button.setToolTip(
+                    "Download, verify and install the update"
+                )
                 self._set_status("New version available.", "warn")
+                notes: list[str] = []
                 if result.mandatory:
-                    self._detail.setText(
+                    notes.append(
                         "This update is required because your installed version "
                         "is no longer supported. It is still installed only with "
                         "your consent."
                     )
-                    self._detail.show()
+                if not (self._config and self._config.expected_publisher):
+                    notes.append(
+                        "The installer is not Authenticode-signed. IDM verifies "
+                        "it against the Ed25519-signed release manifest and its "
+                        "SHA-256 digest before installation."
+                    )
+                if notes:
+                    self._set_detail("\n\n".join(notes), "info")
             self._update_button.show()
             self._update_button.setEnabled(True)
             self._retry_button.hide()
             return
 
         self._latest_value.set_link_enabled(False)
-        self._update_button.hide()
         self._retry_button.hide()
-        if result.installed_is_newer:
-            self._set_status("You are using the latest version of IDM.", "ok")
-            self._detail.setText(
-                "The installed version is newer than the latest published release."
+        self._download_button.setToolTip(
+            f"Download the IDM {result.latest_version} installer"
+        )
+        self._download_button.show()
+        if self._reinstall_available():
+            self._update_button.setText(self._install_button_text())
+            self._update_button.setToolTip(
+                f"Download, verify and reinstall IDM {result.latest_version}"
             )
-            self._detail.show()
+            self._update_button.setEnabled(True)
+            self._set_status("You are using the latest version of IDM.", "ok")
+            notes = [
+                f"IDM {result.latest_version} is already installed. "
+                "Reinstalling repairs missing or damaged program files; your "
+                "downloads, settings and history are kept."
+            ]
+            if not (self._config and self._config.expected_publisher):
+                notes.append(
+                    "The installer is verified against the Ed25519-signed "
+                    "release manifest and its SHA-256 digest before reinstall."
+                )
+            self._set_detail("\n\n".join(notes), "info")
+        elif result.installed_is_newer:
+            self._update_button.setText("Install Update")
+            self._update_button.setEnabled(False)
+            self._update_button.setToolTip("No update is available")
+            self._set_status("You are using the latest version of IDM.", "ok")
+            self._set_detail(
+                "The installed version is newer than the latest published "
+                "release.",
+                "warn",
+            )
         else:
+            self._update_button.setText("Install Update")
+            self._update_button.setEnabled(False)
+            self._update_button.setToolTip("No update is available")
             self._set_status("You are using the latest version of IDM.", "ok")
 
     def _on_check_failed(self, message: str) -> None:
         self._busy = False
+        try:
+            self._settings.note_update_check()
+        except Exception:
+            logger.debug("Could not record the update check time", exc_info=True)
+        self.check_failed.emit(str(message))
         self._check_button.setEnabled(True)
         self._progress.hide()
         self._progress_text.hide()
         self._prepared = None
         self._confirmed_install = False
-        self._update_button.hide()
+        self._update_button.setText("Install Update")
+        self._update_button.setEnabled(False)
+        self._update_button.setToolTip("Update check failed")
+        self._download_button.hide()
         self._latest_value.setText("—")
         self._latest_value.set_link_enabled(False)
         self._release_date.clear()
@@ -444,9 +519,14 @@ class UpdatePanel(QWidget):
             return
         self._show_message(
             "Download opened in your browser.",
-            f"Run the downloaded installer to update IDM to "
-            f"{result.latest_version}. Automatic installation is disabled in "
-            "this build.",
+            (
+                f"Run the downloaded installer to update IDM to "
+                f"{result.latest_version}. Automatic installation is disabled "
+                "in this build."
+                if result.update_available
+                else f"Run the downloaded installer to reinstall or repair "
+                f"IDM {result.latest_version}."
+            ),
             "ok",
         )
 
@@ -456,13 +536,12 @@ class UpdatePanel(QWidget):
         if self._manual_download:
             self._open_manual_download()
             return
-        result = self._result
         if self._prepared is not None:
             if not self._confirm_install_if_needed():
                 return
             self._install_prepared()
             return
-        if not result.update_available:
+        if not self._install_action_available():
             return
         if not self._confirm_install_if_needed():
             return
@@ -482,16 +561,41 @@ class UpdatePanel(QWidget):
             return False
 
         message = QMessageBox(self)
-        message.setWindowTitle("Install IDM update")
         message.setIcon(QMessageBox.Icon.Question)
-        message.setText(f"Install {APP_NAME} {result.latest_version} now?")
-        details = (
-            f"Current version: {result.current_version}\n"
-            f"New version: {result.latest_version}\n"
-            f"Release date: {result.manifest.release_date}\n\n"
-            "IDM will back up your settings, download history and queue, then "
-            "close while the verified installer runs."
+        reinstall = self._reinstall_available()
+        if reinstall:
+            message.setWindowTitle("Reinstall IDM")
+            message.setText(
+                f"Reinstall {APP_NAME} {result.latest_version} now?"
+            )
+        else:
+            message.setWindowTitle("Install IDM update")
+            message.setText(f"Install {APP_NAME} {result.latest_version} now?")
+        config = self._config or config_from_settings(self._settings)
+        verification = (
+            "Authenticode, SHA-256 and the signed release manifest"
+            if config.expected_publisher
+            else "SHA-256 and the Ed25519-signed release manifest (this build "
+            "has no Authenticode publisher)"
         )
+        if reinstall:
+            details = (
+                f"Installed version: {result.current_version}\n"
+                f"Release date: {result.manifest.release_date}\n"
+                f"Verification: {verification}\n\n"
+                "IDM will back up your settings, download history and queue, "
+                f"then close while the verified installer reinstalls IDM "
+                f"{result.latest_version}. Your downloads and history are kept."
+            )
+        else:
+            details = (
+                f"Current version: {result.current_version}\n"
+                f"New version: {result.latest_version}\n"
+                f"Release date: {result.manifest.release_date}\n"
+                f"Verification: {verification}\n\n"
+                "IDM will back up your settings, download history and queue, "
+                "then close while the verified installer runs."
+            )
         if getattr(result.manifest, "package_size", None):
             details += (
                 f"\nDownload size: {format_size(int(result.manifest.package_size))}"
@@ -512,7 +616,9 @@ class UpdatePanel(QWidget):
         message.setStandardButtons(
             QMessageBox.StandardButton.Cancel | QMessageBox.StandardButton.Ok
         )
-        message.button(QMessageBox.StandardButton.Ok).setText("Install")
+        message.button(QMessageBox.StandardButton.Ok).setText(
+            "Reinstall" if reinstall else "Install"
+        )
         message.setDefaultButton(QMessageBox.StandardButton.Cancel)
         if message.exec() != QMessageBox.StandardButton.Ok:
             return False
@@ -552,7 +658,7 @@ class UpdatePanel(QWidget):
         config = self._config or config_from_settings(self._settings)
         self._config = config
         try:
-            config.require_publisher()
+            config.require_install_trust()
         except UpdateConfigurationError as exc:
             self._last_action = "check"
             self._show_message(
@@ -633,7 +739,7 @@ class UpdatePanel(QWidget):
             self._set_status("Downloading update…", "busy")
         elif text.startswith("Verifying"):
             self._progress.setRange(0, 0)
-            self._progress_text.setText("Checking SHA-256 and Authenticode signature…")
+            self._progress_text.setText("Checking the installer SHA-256…")
             self._set_status("Verifying update package…", "busy")
         elif text.startswith("Preparing"):
             self._progress.setRange(0, 0)
@@ -658,13 +764,28 @@ class UpdatePanel(QWidget):
             return
 
         self._set_status("Update downloaded and verified.", "ok")
-        self._detail.setText(
-            "The signed installer passed SHA-256 and Windows Authenticode "
-            "verification. Click Install Now when you are ready; IDM will "
-            "close and install the update."
-        )
-        self._detail.show()
-        self._update_button.setText("Install Now")
+        if self._config and self._config.expected_publisher:
+            verification = (
+                "SHA-256 and Windows Authenticode verification"
+            )
+        else:
+            verification = (
+                "SHA-256 verification against the Ed25519-signed release "
+                "manifest"
+            )
+        if self._reinstall_available():
+            detail = (
+                f"The installer passed {verification}. Click Reinstall Now "
+                f"when you are ready; IDM will close and reinstall "
+                f"{self._result.latest_version}."
+            )
+        else:
+            detail = (
+                f"The installer passed {verification}. Click Install Now when "
+                "you are ready; IDM will close and install the update."
+            )
+        self._set_detail(detail, "ok")
+        self._update_button.setText(self._install_button_text(prepared=True))
         self._update_button.show()
         self._update_button.setEnabled(True)
         self._retry_button.hide()
@@ -686,6 +807,7 @@ class UpdatePanel(QWidget):
             update_dir=self._update_dir,
             restart=self._restart_requested,
             manifest=result.manifest,
+            reinstall=self._reinstall_available(),
         )
         try:
             error = self._on_install(request)
@@ -705,14 +827,18 @@ class UpdatePanel(QWidget):
         self._check_button.setEnabled(True)
         self._progress.hide()
         self._progress_text.hide()
-        if self._result is not None and self._result.update_available:
+        if self._install_action_available():
             self._update_button.setText(
-                "Install Now" if self._prepared is not None else "Update Now"
+                self._install_button_text(prepared=self._prepared is not None)
             )
             self._update_button.show()
             self._update_button.setEnabled(True)
         self._last_action = "download"
-        self._show_message("Update failed.", message, "error")
+        self._show_message(
+            "Reinstall failed." if self._reinstall_available() else "Update failed.",
+            message,
+            "error",
+        )
         self._retry_button.show()
 
     def _on_install_cancelled(self) -> None:
@@ -725,8 +851,8 @@ class UpdatePanel(QWidget):
         self._detail.hide()
         self._prepared = None
         self._cleanup_update_dir()
-        if self._result is not None and self._result.update_available:
-            self._update_button.setText("Update Now")
+        if self._install_action_available():
+            self._update_button.setText(self._install_button_text())
             self._update_button.show()
             self._update_button.setEnabled(True)
         self._retry_button.show()
@@ -758,6 +884,34 @@ class UpdatePanel(QWidget):
         self._begin_download()
 
     # ------------------------------------------------------------------ helpers
+    def _installation_supported(self) -> bool:
+        config = self._config or config_from_settings(self._settings)
+        return config.configured and config.installation_supported
+
+    def _reinstall_available(self) -> bool:
+        result = self._result
+        if result is None or self._manual_download:
+            return False
+        return (
+            not result.update_available
+            and not result.installed_is_newer
+            and result.current_version == result.latest_version
+            and self._installation_supported()
+        )
+
+    def _install_action_available(self) -> bool:
+        result = self._result
+        if result is None:
+            return False
+        return bool(result.update_available or self._reinstall_available())
+
+    def _install_button_text(self, prepared: bool = False) -> str:
+        if self._reinstall_available():
+            return "Reinstall Now" if prepared else (
+                f"Reinstall {self._result.latest_version}"
+            )
+        return "Install Now" if prepared else "Install Update"
+
     def _set_status(self, text: str, state: str) -> None:
         self._status.setText(text)
         if self._status.property("state") != state:
@@ -767,10 +921,19 @@ class UpdatePanel(QWidget):
             style.polish(self._status)
             self._status.update()
 
+    def _set_detail(self, text: str, tone: str = "error") -> None:
+        self._detail.setText(text)
+        if self._detail.property("tone") != tone:
+            self._detail.setProperty("tone", tone)
+            style = self._detail.style()
+            style.unpolish(self._detail)
+            style.polish(self._detail)
+            self._detail.update()
+        self._detail.setVisible(bool(text))
+
     def _show_message(self, status: str, detail: str, state: str) -> None:
         self._set_status(status, state)
-        self._detail.setText(detail)
-        self._detail.setVisible(bool(detail))
+        self._set_detail(detail, state)
 
     def _cleanup_update_dir(self) -> None:
         if self._update_dir is not None and not self._handed_off:
@@ -790,5 +953,8 @@ class UpdatePanel(QWidget):
     def _sync_icons(self) -> None:
         self._check_button.setIcon(
             icons.icon("arrow_up", self._theme.palette.text_muted, 16)
+        )
+        self._download_button.setIcon(
+            icons.icon("download", self._theme.palette.text_muted, 16)
         )
         self._update_button.setIcon(icons.icon("download", "#FFFFFF", 16))

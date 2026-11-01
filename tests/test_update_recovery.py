@@ -103,6 +103,29 @@ def test_successful_update_is_reported(environment, tmp_path):
     assert "installed successfully" in report.message
 
 
+def test_successful_reinstall_is_reported(environment, tmp_path):
+    _, backup = environment
+    write_pending_update(
+        PendingUpdate(
+            from_version="1.0.0",
+            target_version="1.0.0",
+            started_at="2026-11-01T10:00:00+00:00",
+            backup_dir=str(backup.directory),
+            db_backup=str(backup.database),
+            app_exe=str(tmp_path / "app" / "IDM.exe"),
+            reinstall=True,
+        )
+    )
+    settings = FakeSettings()
+
+    report = finalize_startup(settings, "1.0.0")
+
+    assert report.status == "succeeded"
+    assert report.succeeded is True
+    assert settings.success_version == "1.0.0"
+    assert "reinstalled successfully" in report.message
+
+
 def test_failed_update_needs_attention(environment, tmp_path):
     _, backup = environment
     write_pending_update(_pending(tmp_path, backup))

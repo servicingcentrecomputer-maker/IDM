@@ -25,13 +25,22 @@ logger = logging.getLogger(__name__)
 
 COLUMN_NAME = 0
 COLUMN_SIZE = 1
-COLUMN_STATUS = 2
-COLUMN_ETA = 3
-COLUMN_SPEED = 4
-COLUMN_LAST_TRY = 5
-COLUMN_COUNT = 6
+COLUMN_CATEGORY = 2
+COLUMN_STATUS = 3
+COLUMN_ETA = 4
+COLUMN_SPEED = 5
+COLUMN_LAST_TRY = 6
+COLUMN_COUNT = 7
 
-HEADERS = ("File Name", "Size", "Status", "Time Left", "Transfer Rate", "Last Try")
+HEADERS = (
+    "File Name",
+    "Size",
+    "Category",
+    "Status",
+    "Time Left",
+    "Transfer Rate",
+    "Last Try",
+)
 
 ITEM_ROLE = Qt.ItemDataRole.UserRole + 1
 STATUS_ROLE = Qt.ItemDataRole.UserRole + 2
@@ -45,6 +54,12 @@ _DOWNLOADING_FILTER_STATUSES = {
     DownloadStatus.RETRYING,
     DownloadStatus.PAUSING,
     DownloadStatus.STOPPING,
+}
+
+_HISTORY_FILTER_STATUSES = {
+    DownloadStatus.COMPLETED,
+    DownloadStatus.FAILED,
+    DownloadStatus.STOPPED,
 }
 
 _STATUS_SORT_ORDER = {
@@ -111,6 +126,8 @@ class DownloadTableModel(QAbstractTableModel):
                 return item.filename
             if column == COLUMN_SIZE:
                 return format_size(item.total_bytes) if item.total_bytes is not None else "—"
+            if column == COLUMN_CATEGORY:
+                return item.category or "Other"
             if column == COLUMN_STATUS:
                 return item.status.value
             if column == COLUMN_ETA:
@@ -126,6 +143,7 @@ class DownloadTableModel(QAbstractTableModel):
         if role == Qt.ItemDataRole.ToolTipRole:
             lines = [
                 f"<b>{item.filename}</b>",
+                f"Category: {item.category}",
                 f"From: {item.url}",
                 f"To: {item.path}",
             ]
@@ -152,6 +170,7 @@ class DownloadTableModel(QAbstractTableModel):
 
         if role == Qt.ItemDataRole.ForegroundRole and column in {
             COLUMN_SIZE,
+            COLUMN_CATEGORY,
             COLUMN_ETA,
             COLUMN_SPEED,
             COLUMN_LAST_TRY,
@@ -218,6 +237,8 @@ def _sort_value(item: DownloadItem, column: int) -> Any:
         return item.filename.casefold()
     if column == COLUMN_SIZE:
         return item.total_bytes if item.total_bytes is not None else -1
+    if column == COLUMN_CATEGORY:
+        return (item.category or "").casefold()
     if column == COLUMN_STATUS:
         return _STATUS_SORT_ORDER.get(item.status, 99)
     if column == COLUMN_ETA:
@@ -267,6 +288,15 @@ class DownloadFilterProxyModel(QSortFilterProxyModel):
         elif self._filter_key == "completed":
             if item.status != DownloadStatus.COMPLETED:
                 return False
+        elif self._filter_key == "queued":
+            if item.status != DownloadStatus.QUEUED:
+                return False
+        elif self._filter_key == "paused":
+            if item.status not in {DownloadStatus.PAUSED, DownloadStatus.STOPPED}:
+                return False
+        elif self._filter_key == "history":
+            if item.status not in _HISTORY_FILTER_STATUSES:
+                return False
         elif (
             self._filter_key in CATEGORY_FILTER_KEYS
             and item.category != CATEGORY_FILTER_KEYS[self._filter_key]
@@ -274,7 +304,14 @@ class DownloadFilterProxyModel(QSortFilterProxyModel):
             return False
 
         if self._search:
-            haystack = f"{item.filename}\n{item.url}".lower()
+            haystack = "\n".join(
+                (
+                    item.filename,
+                    item.url,
+                    item.category or "",
+                    item.source_domain or "",
+                )
+            ).lower()
             if self._search not in haystack:
                 return False
         return True

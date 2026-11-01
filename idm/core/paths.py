@@ -118,6 +118,10 @@ def update_history_file() -> Path:
     return updates_dir() / "update-history.json"
 
 
+def install_result_file() -> Path:
+    return updates_dir() / "last-install-result.json"
+
+
 def last_rollback_plan_file() -> Path:
     return update_rollback_dir() / "last-rollback.json"
 

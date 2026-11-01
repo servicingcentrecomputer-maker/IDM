@@ -15,12 +15,14 @@ from PySide6.QtWidgets import (
     QComboBox,
     QFileDialog,
     QFrame,
+    QGridLayout,
     QHBoxLayout,
     QHeaderView,
     QLabel,
     QLineEdit,
     QMessageBox,
     QRadioButton,
+    QScrollArea,
     QSpinBox,
     QTabWidget,
     QTableWidget,
@@ -47,7 +49,7 @@ from ...core.settings import AppSettings
 from ...updater.schedule import parse_timestamp
 from ...updater.version_manager import current_version
 from .. import icons
-from ..theme import PALETTES, THEME_LABELS, THEME_ORDER, ThemeManager
+from ..theme import THEME_LABELS, THEME_ORDER, ThemeManager, resolved_palette
 from .common import (
     BaseDialog,
     make_divider,
@@ -69,13 +71,14 @@ _THEME_DESCRIPTIONS = {
     "classic": "Light grey chrome with the classic blue progress bars.",
     "light": "Clean white panels and rounded modern controls.",
     "dark": "A low-light palette for comfortable night use.",
+    "system": "Automatically follows the Windows light or dark setting.",
 }
 
 
 class _ThemePreview(QWidget):
     def __init__(self, mode: str, parent=None) -> None:
         super().__init__(parent)
-        self._palette = PALETTES[mode]
+        self._palette = resolved_palette(mode)
         self.setFixedHeight(74)
 
     def paintEvent(self, event) -> None:
@@ -211,13 +214,15 @@ class OptionsDialog(BaseDialog):
         )
 
         self._tabs = QTabWidget()
-        self._tabs.addTab(self._build_general_tab(), "General")
-        self._tabs.addTab(self._build_downloads_tab(), "Download Settings")
-        self._tabs.addTab(self._build_save_to_tab(), "Save To")
-        self._tabs.addTab(self._build_connections_tab(), "Connection Settings")
-        self._tabs.addTab(self._build_interface_tab(), "User Interface")
-        self._tabs.addTab(self._build_theme_tab(), "Themes")
-        self._tabs.addTab(self._build_updates_tab(), "Updates")
+        self._tabs.addTab(self._scrollable(self._build_general_tab()), "General")
+        self._tabs.addTab(self._scrollable(self._build_downloads_tab()), "Download Settings")
+        self._tabs.addTab(self._scrollable(self._build_save_to_tab()), "Save To")
+        self._tabs.addTab(
+            self._scrollable(self._build_connections_tab()), "Connection Settings"
+        )
+        self._tabs.addTab(self._scrollable(self._build_interface_tab()), "User Interface")
+        self._tabs.addTab(self._scrollable(self._build_theme_tab()), "Themes")
+        self._tabs.addTab(self._scrollable(self._build_updates_tab()), "Updates")
         self._tabs.setCurrentIndex(
             max(0, min(int(initial_tab), self._tabs.count() - 1))
         )
@@ -249,6 +254,16 @@ class OptionsDialog(BaseDialog):
         layout.setContentsMargins(18, 16, 18, 16)
         layout.setSpacing(7)
         return page
+
+    @staticmethod
+    def _scrollable(page: QWidget) -> QScrollArea:
+        scroll = QScrollArea()
+        scroll.setObjectName("DialogScroll")
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setWidget(page)
+        return scroll
 
     def _build_general_tab(self) -> QWidget:
         page = self._page()
@@ -773,10 +788,11 @@ class OptionsDialog(BaseDialog):
         )
         layout.addWidget(self.publisher_edit)
         publisher_hint = make_label(
-            "Installers are only accepted when Windows Authenticode verifies them "
-            "and the signer matches this name exactly. A publisher is required to "
-            "install updates. The IDM_UPDATE_PUBLISHER environment variable "
-            "overrides this value.",
+            "When a publisher is set, installers must have a valid Windows "
+            "Authenticode signature and the signer must match this name exactly. "
+            "Without a publisher, IDM still installs packages that match the "
+            "Ed25519-signed manifest and its SHA-256 hash. The "
+            "IDM_UPDATE_PUBLISHER environment variable overrides this value.",
             "HintLabel",
         )
         publisher_hint.setWordWrap(True)
@@ -799,13 +815,14 @@ class OptionsDialog(BaseDialog):
         layout = page.layout()
 
         layout.addWidget(make_label("THEME", "FieldLabel"))
-        cards = QHBoxLayout()
-        cards.setSpacing(10)
+        cards = QGridLayout()
+        cards.setHorizontalSpacing(10)
+        cards.setVerticalSpacing(10)
         self.theme_cards: dict[str, ThemeCard] = {}
-        for mode in THEME_ORDER:
+        for index, mode in enumerate(THEME_ORDER):
             card = ThemeCard(mode, mode == self._settings.theme, page)
             card.clicked.connect(self._preview_theme)
-            cards.addWidget(card, 1)
+            cards.addWidget(card, index // 2, index % 2)
             self.theme_cards[mode] = card
         layout.addLayout(cards)
         layout.addSpacing(8)

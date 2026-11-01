@@ -73,7 +73,10 @@ def test_unconfigured_updates_explain_how_to_configure(panel, monkeypatch):
     assert "Options" in panel._detail.text()
     assert panel._detail.text().strip()
     assert panel._latest_value.text() == "—"
-    assert panel._update_button.isHidden()
+    assert not panel._update_button.isHidden()
+    assert not panel._update_button.isEnabled()
+    assert panel._update_button.text() == "Install Update"
+    assert panel._download_button.isHidden()
 
 
 def test_no_update_shows_required_exact_text(panel):
@@ -81,8 +84,29 @@ def test_no_update_shows_required_exact_text(panel):
     assert panel._status.text() == "You are using the latest version of IDM."
     assert not panel._notes.isHidden()
     assert "Faster resume" in panel._notes.toPlainText()
-    assert panel._update_button.isHidden()
+    assert not panel._update_button.isHidden()
+    assert not panel._update_button.isEnabled()
+    assert not panel._download_button.isHidden()
+    assert panel._download_button.text() == "Download Installer"
     assert not panel._latest_value._enabled_link
+
+
+def test_latest_version_offers_installer_download(panel, monkeypatch):
+    opened: list[str] = []
+
+    class FakeDesktop:
+        @staticmethod
+        def openUrl(url):
+            opened.append(url.toString())
+            return True
+
+    monkeypatch.setattr("idm.ui.dialogs.update.QDesktopServices", FakeDesktop)
+    result = _result(current="1.0.0", latest="1.0.0", available=False)
+    panel._on_check_succeeded(result)
+    assert not panel._download_button.isHidden()
+    panel._download_button.click()
+    assert opened == [result.manifest.download_url]
+    assert "reinstall or repair" in panel._detail.text()
 
 
 def test_update_available_shows_details_and_button(panel):
@@ -93,10 +117,29 @@ def test_update_available_shows_details_and_button(panel):
     assert panel._latest_value.cursor().shape() == Qt.CursorShape.PointingHandCursor
     assert panel._release_date.text() == "Released 2026-10-31"
     assert not panel._update_button.isHidden()
+    assert panel._update_button.isEnabled()
+    assert panel._update_button.text() == "Install Update"
+    assert panel._download_button.isHidden()
     assert not panel._notes.isHidden()
     assert not panel._notes_label.isHidden()
     assert "VERSION 1.1.0" in panel._notes_label.text()
     assert panel._mandatory_label.isHidden()
+
+
+def test_install_button_is_disabled_until_an_update_exists(panel):
+    assert not panel._update_button.isHidden()
+    assert not panel._update_button.isEnabled()
+    assert panel._update_button.text() == "Install Update"
+
+
+def test_install_button_installs_available_update(panel, monkeypatch):
+    prompts: list[bool] = []
+    monkeypatch.setattr(
+        UpdatePanel, "_prompt_install", lambda _self: prompts.append(True)
+    )
+    panel._on_check_succeeded(_result())
+    panel._update_button.click()
+    assert prompts == [True]
 
 
 def test_mandatory_update_is_still_consensual(panel):
@@ -112,7 +155,62 @@ def test_installed_version_newer_than_latest(panel):
     )
     assert panel._status.text() == "You are using the latest version of IDM."
     assert "newer" in panel._detail.text()
-    assert panel._update_button.isHidden()
+    assert not panel._update_button.isEnabled()
+    assert not panel._download_button.isHidden()
+
+
+def test_reinstall_offered_when_current_version_is_latest(panel):
+    panel._config = UpdateConfig(
+        manifest_url=MANIFEST_URL,
+        expected_publisher="",
+        trusted_hosts=(TRUSTED_HOST,),
+        manifest_public_key="key",
+    )
+    panel._on_check_succeeded(
+        _result(current="1.1.0", latest="1.1.0", available=False)
+    )
+    assert panel._status.text() == "You are using the latest version of IDM."
+    assert panel._update_button.text() == "Reinstall 1.1.0"
+    assert panel._update_button.isEnabled()
+    assert "reinstall" in panel._detail.text().lower()
+    assert "damaged program files" in panel._detail.text()
+    assert not panel._download_button.isHidden()
+
+
+def test_reinstall_button_starts_verified_download(panel, monkeypatch):
+    started: list[bool] = []
+    monkeypatch.setattr(
+        UpdatePanel, "_confirm_install_if_needed", lambda _self: True
+    )
+    monkeypatch.setattr(UpdatePanel, "_preflight_install", lambda _self: True)
+    monkeypatch.setattr(
+        UpdatePanel, "_begin_download", lambda _self: started.append(True)
+    )
+    panel._config = UpdateConfig(
+        manifest_url=MANIFEST_URL,
+        expected_publisher="",
+        trusted_hosts=(TRUSTED_HOST,),
+        manifest_public_key="key",
+    )
+    panel._on_check_succeeded(
+        _result(current="1.1.0", latest="1.1.0", available=False)
+    )
+    panel._update_button.click()
+    assert started == [True]
+
+
+def test_newer_installed_version_is_not_reinstalled(panel):
+    panel._config = UpdateConfig(
+        manifest_url=MANIFEST_URL,
+        expected_publisher="",
+        trusted_hosts=(TRUSTED_HOST,),
+        manifest_public_key="key",
+    )
+    panel._on_check_succeeded(
+        _result(current="2.0.0", latest="1.1.0", available=False, installed_is_newer=True)
+    )
+    assert panel._update_button.text() == "Install Update"
+    assert not panel._update_button.isEnabled()
 
 
 def test_check_failure_allows_retry(panel):
@@ -120,7 +218,8 @@ def test_check_failure_allows_retry(panel):
     assert panel._status.text() == "Update failed."
     assert panel._detail.text() == "The update server did not respond in time."
     assert not panel._retry_button.isHidden()
-    assert panel._update_button.isHidden()
+    assert not panel._update_button.isEnabled()
+    assert panel._download_button.isHidden()
     assert panel._latest_value.text() == "—"
 
 
@@ -139,7 +238,10 @@ def test_unsigned_build_offers_manual_download(panel, monkeypatch):
     )
     panel._manual_download = True
     panel._on_check_succeeded(_result())
-    assert panel._update_button.text() == "Download Installer"
+    assert panel._update_button.text() == "Install Update"
+    assert panel._update_button.isEnabled()
+    assert "official installer download" in panel._update_button.toolTip()
+    assert panel._download_button.isHidden()
     assert "Automatic installation is disabled" in panel._status.text()
     assert "GitHub" in panel._detail.text()
     panel._update_action()
@@ -163,16 +265,50 @@ def test_unsigned_build_start_install_opens_browser(panel, monkeypatch):
     assert panel._install_worker is None
 
 
-def test_preflight_requires_publisher(panel):
+def test_preflight_requires_a_trust_anchor(panel):
     panel._result = _result()
     panel._config = UpdateConfig(
         manifest_url=MANIFEST_URL,
         expected_publisher="",
         trusted_hosts=(TRUSTED_HOST,),
+        manifest_public_key="",
     )
     assert panel._preflight_install() is False
     assert panel._status.text() == "Automatic installation is not available."
-    assert "certificate" in panel._detail.text().lower()
+    assert "trusted update signature" in panel._detail.text().lower()
+
+
+def test_preflight_accepts_signed_manifest_without_publisher(
+    panel, monkeypatch, tmp_path
+):
+    updater = tmp_path / "IDM_Updater.exe"
+    updater.write_bytes(b"binary")
+    monkeypatch.setattr(
+        "idm.ui.dialogs.update.updater_executable", lambda: updater
+    )
+    panel._result = _result()
+    panel._config = UpdateConfig(
+        manifest_url=MANIFEST_URL,
+        expected_publisher="",
+        trusted_hosts=(TRUSTED_HOST,),
+        manifest_public_key="key",
+    )
+    assert panel._preflight_install() is True
+
+
+def test_install_button_installs_with_sha256_trust(panel, monkeypatch):
+    started: list[bool] = []
+    monkeypatch.setattr(
+        UpdatePanel, "_confirm_install_if_needed", lambda _self: True
+    )
+    monkeypatch.setattr(UpdatePanel, "_preflight_install", lambda _self: True)
+    monkeypatch.setattr(
+        UpdatePanel, "_begin_download", lambda _self: started.append(True)
+    )
+    panel._on_check_succeeded(_result())
+    assert "not Authenticode-signed" in panel._detail.text()
+    panel._update_button.click()
+    assert started == [True]
 
 
 def test_preflight_requires_updater_component(panel, monkeypatch):

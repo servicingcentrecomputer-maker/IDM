@@ -25,7 +25,6 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QHBoxLayout,
     QLabel,
-    QLineEdit,
     QMainWindow,
     QMenu,
     QMessageBox,
@@ -77,7 +76,7 @@ from ..updater.state import (
 from ..updater.version_manager import current_version
 from integrations.paths import native_manifest_dir
 from integrations.service import BrowserIntegrationService
-from . import icons
+from . import design, icons
 from .dialogs.about import AboutDialog
 from .dialogs.add_download import AddDownloadDialog
 from .dialogs.options import OptionsDialog
@@ -109,6 +108,9 @@ _FILTER_TITLES = {
     "all": "All Downloads",
     "downloading": "Downloading",
     "completed": "Completed",
+    "queued": "Queued",
+    "paused": "Paused",
+    "history": "Download History",
     "documents": "Documents",
     "music": "Music",
     "videos": "Videos",
@@ -119,16 +121,17 @@ _FILTER_TITLES = {
 _SECTION_TITLES = {
     "dashboard": "Dashboard",
     "video_downloads": "Video Downloads",
-    "browser_integration": "Browser Integration",
+    "browser_integration": "Browser Assistant",
     "analytics": "Download Analytics",
     "performance": "Performance Monitor",
     "notifications": "Notifications",
     "update_center": "Update Center",
-    "advanced_settings": "Advanced Settings",
+    "settings": "Settings",
+    "advanced_settings": "Settings",
 }
 
 _SECTION_SUBTITLES = {
-    "dashboard": "Transfers, activity and system status at a glance.",
+    "dashboard": "Transfers, activity and storage at a glance.",
     "video_downloads": (
         "Direct media transfers you are authorised to download."
     ),
@@ -141,7 +144,8 @@ _SECTION_SUBTITLES = {
     ),
     "notifications": "Completion, failure and update notices stored locally.",
     "update_center": "Signed release checks, history and rollback tools.",
-    "advanced_settings": "Folders, transfers, interface and maintenance tools.",
+    "settings": "Every IDM preference, organised and searchable.",
+    "advanced_settings": "Every IDM preference, organised and searchable.",
 }
 
 _RESUMABLE_ALL = {DownloadStatus.PAUSED, DownloadStatus.STOPPED}
@@ -157,6 +161,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self._settings = settings
         self._theme = theme
+        design.set_animations_enabled(bool(settings.ui_animations))
         self._shutdown_done = False
         self._shortcuts: list[QShortcut] = []
         self._actions: dict[str, QAction] = {}
@@ -165,6 +170,7 @@ class MainWindow(QMainWindow):
         self._progress_dialogs: dict[str, DownloadProgressDialog] = {}
         self._update_notification = None
         self._update_window = None
+        self._last_content_key = "all"
         self._recovery: StartupReport | None = None
         self._database_restored = bool(database_restored)
 
@@ -211,6 +217,8 @@ class MainWindow(QMainWindow):
         self._install_shortcuts()
         self._restore_geometry()
         self._apply_view_settings()
+        if self._settings.sidebar_collapsed:
+            self._sidebar.set_collapsed(True, animate=False)
         self._refresh_page_state()
         self._update_actions()
 
@@ -362,6 +370,7 @@ class MainWindow(QMainWindow):
 
         self._toolbar = DownloadToolbar(self._theme, central)
         root.addWidget(self._toolbar)
+        self._search = self._toolbar.search_field
 
         body = QWidget()
         body_layout = QHBoxLayout(body)
@@ -374,17 +383,18 @@ class MainWindow(QMainWindow):
         content = QWidget()
         content.setObjectName("ContentArea")
         content_layout = QVBoxLayout(content)
-        content_layout.setContentsMargins(16, 14, 16, 12)
-        content_layout.setSpacing(10)
+        content_layout.setContentsMargins(24, 20, 24, 16)
+        content_layout.setSpacing(16)
 
         header = QWidget()
+        header.setObjectName("ContentHeader")
         header_layout = QHBoxLayout(header)
         header_layout.setContentsMargins(0, 0, 0, 0)
         header_layout.setSpacing(16)
 
         title_box = QVBoxLayout()
         title_box.setContentsMargins(0, 0, 0, 0)
-        title_box.setSpacing(2)
+        title_box.setSpacing(4)
         self._page_title = QLabel("All Downloads")
         self._page_title.setObjectName("PageTitle")
         self._page_subtitle = QLabel()
@@ -393,19 +403,6 @@ class MainWindow(QMainWindow):
         title_box.addWidget(self._page_subtitle)
         header_layout.addLayout(title_box)
         header_layout.addStretch(1)
-
-        self._search = QLineEdit()
-        self._search.setObjectName("SearchBox")
-        self._search.setPlaceholderText("Search downloads")
-        self._search.setClearButtonEnabled(True)
-        self._search.setFixedWidth(260)
-        self._search_action = QAction(
-            icons.icon("search", self._theme.palette.text_faint, 16), "", self._search
-        )
-        self._search.addAction(
-            self._search_action, QLineEdit.ActionPosition.LeadingPosition
-        )
-        header_layout.addWidget(self._search, 0, Qt.AlignmentFlag.AlignVCenter)
 
         content_layout.addWidget(header)
 
@@ -446,7 +443,12 @@ class MainWindow(QMainWindow):
             self._theme, self._settings, self._manager, self
         )
         self._update_page = UpdateCenterPage(
-            self._theme, self._settings, self
+            self._theme,
+            self._settings,
+            on_install=self._prepare_update_install,
+            active_downloads=self._active_download_count,
+            pause_downloads=self._pause_active_downloads,
+            parent=self,
         )
         self._advanced_settings_page = AdvancedSettingsPage(
             self._theme, self._settings, self
@@ -466,7 +468,10 @@ class MainWindow(QMainWindow):
         self._content_stack.setObjectName("ContentStack")
         self._content_stack.addWidget(self._downloads_page)
         for key in _SECTION_TITLES:
+            if key == "settings":
+                continue
             self._content_stack.addWidget(self._pages[key])
+        self._pages["settings"] = self._advanced_settings_page
         content_layout.addWidget(self._content_stack, 1)
 
         body_layout.addWidget(content, 1)
@@ -481,6 +486,18 @@ class MainWindow(QMainWindow):
         super().showEvent(event)
         QTimer.singleShot(0, lambda: self._theme.apply_window_chrome(self))
 
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._apply_responsive_layout()
+
+    def _apply_responsive_layout(self) -> None:
+        downloads_visible = (
+            getattr(self, "_content_stack", None) is not None
+            and self._content_stack.currentWidget() is self._downloads_page
+        )
+        if hasattr(self, "_search"):
+            self._search.setVisible(downloads_visible and self.width() >= 1200)
+
     # ------------------------------------------------------------------ wiring
     def _wire_signals(self) -> None:
         toolbar = self._toolbar
@@ -494,8 +511,15 @@ class MainWindow(QMainWindow):
         toolbar.scheduler_requested.connect(self._open_scheduler)
         toolbar.queue_requested.connect(self._open_queue)
         toolbar.theme_toggled.connect(self._cycle_theme)
+        toolbar.notifications_requested.connect(
+            lambda: self._navigate_to("notifications")
+        )
+        toolbar.settings_requested.connect(lambda: self._navigate_to("settings"))
+        toolbar.sidebar_toggled.connect(self._toggle_sidebar_rail)
 
         self._sidebar.filter_changed.connect(self._on_filter_changed)
+        self._sidebar.collapsed_changed.connect(self._on_sidebar_collapsed)
+        self._toolbar.set_sidebar_collapsed(bool(self._settings.sidebar_collapsed))
         self._search.textChanged.connect(self._on_search_changed)
 
         self._manager.download_added.connect(self._on_manager_changed)
@@ -555,13 +579,19 @@ class MainWindow(QMainWindow):
         settings_page = self._advanced_settings_page
         settings_page.settings_applied.connect(self._on_page_settings_applied)
         settings_page.options_requested.connect(self._open_options)
+        settings_page.options_tab_requested.connect(
+            lambda index: self._open_options(int(index))
+        )
         settings_page.import_requested.connect(self._import_downloads)
         settings_page.export_requested.connect(self._export_downloads)
         settings_page.scheduler_requested.connect(self._open_scheduler)
         settings_page.queue_requested.connect(self._open_queue)
+        settings_page.navigate_requested.connect(self._navigate_to)
+        settings_page.check_requested.connect(lambda: self._show_about(check=True))
         settings_page.message.connect(self._status_bar.show_message)
 
     def _on_page_settings_applied(self) -> None:
+        design.set_animations_enabled(bool(self._settings.ui_animations))
         self._manager.apply_settings()
         self._theme.set_mode(self._settings.theme)
         self._apply_view_settings()
@@ -573,7 +603,6 @@ class MainWindow(QMainWindow):
             return
         self._sidebar.select(key)
         self._on_filter_changed(key)
-
     def _open_download_item(self, download_id: str) -> None:
         item = self._manager.get(download_id)
         if item is None:
@@ -624,6 +653,16 @@ class MainWindow(QMainWindow):
         escape_shortcut.setContext(Qt.ShortcutContext.WidgetShortcut)
         escape_shortcut.activated.connect(self._clear_search)
         self._shortcuts.append(escape_shortcut)
+
+        sidebar_shortcut = QShortcut(QKeySequence("Ctrl+B"), self)
+        sidebar_shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
+        sidebar_shortcut.activated.connect(self._toggle_sidebar_rail)
+        self._shortcuts.append(sidebar_shortcut)
+
+        search_shortcut = QShortcut(QKeySequence("Ctrl+F"), self)
+        search_shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
+        search_shortcut.activated.connect(self._focus_search)
+        self._shortcuts.append(search_shortcut)
 
     def _restore_geometry(self) -> None:
         saved = self._settings.load_bytes("window/geometry")
@@ -930,6 +969,14 @@ class MainWindow(QMainWindow):
         self._settings.save()
         self._apply_view_settings()
 
+    def _toggle_sidebar_rail(self) -> None:
+        self._sidebar.set_collapsed(not self._sidebar.collapsed)
+
+    def _on_sidebar_collapsed(self, collapsed: bool) -> None:
+        self._settings.sidebar_collapsed = bool(collapsed)
+        self._settings.save()
+        self._toolbar.set_sidebar_collapsed(bool(collapsed))
+
     def _apply_view_settings(self) -> None:
         self._toolbar.setVisible(self._settings.show_toolbar)
         self._sidebar.setVisible(self._settings.show_sidebar)
@@ -1000,6 +1047,7 @@ class MainWindow(QMainWindow):
             logger.info("Update notification for %s postponed by the user", latest)
             return
 
+        self._update_page.set_update_result(result)
         logger.info("Update available: IDM %s", latest)
         manual_download = not config_from_settings(
             self._settings
@@ -1015,10 +1063,12 @@ class MainWindow(QMainWindow):
         self._show_update_notification(result)
 
     def _on_update_check_clean(self, result) -> None:
+        self._update_page.set_update_result(result)
         logger.info("Background update check found no update")
         self._status_bar.show_message("IDM is up to date.")
 
     def _on_background_update_failed(self, message: str) -> None:
+        self._update_page.set_check_failed(message)
         logger.warning("Background update check failed: %s", message)
         self._status_bar.show_message(
             "The background update check failed. See the log for details."
@@ -1068,6 +1118,7 @@ class MainWindow(QMainWindow):
             active_download_count=self._active_download_count,
             pause_downloads=self._pause_active_downloads,
         )
+        self._watch_update_dialog(dialog)
         if modal:
             try:
                 dialog.exec()
@@ -1086,6 +1137,13 @@ class MainWindow(QMainWindow):
     def _clear_update_window(self, *_args) -> None:
         self._update_window = None
 
+    def _watch_update_dialog(self, dialog) -> None:
+        panel = getattr(dialog, "update_panel", None)
+        if panel is None:
+            return
+        panel.result_changed.connect(self._update_page.set_update_result)
+        panel.check_failed.connect(self._update_page.set_check_failed)
+
     def _show_about(
         self, check: bool = False, result=None, auto_action: str | None = None
     ) -> None:
@@ -1099,6 +1157,7 @@ class MainWindow(QMainWindow):
             active_download_count=self._active_download_count,
             pause_downloads=self._pause_active_downloads,
         )
+        self._watch_update_dialog(dialog)
         if check:
             if self._settings.update_remind_version:
                 self._settings.clear_update_reminder()
@@ -1172,20 +1231,29 @@ class MainWindow(QMainWindow):
         except Exception:
             logger.warning("Could not cache the new installer", exc_info=True)
 
-        previous = find_cached_installer(from_version)
+        previous = None
         binary_snapshot = None
-        if previous is None:
-            binary_snapshot = create_binary_snapshot(app_exe.parent, from_version)
+        rollback_ready = False
+        reinstall = from_version == target_version
+        if reinstall:
+            logger.info(
+                "Reinstalling IDM %s in place; no rollback plan is needed",
+                target_version,
+            )
+        else:
+            previous = find_cached_installer(from_version)
+            if previous is None:
+                binary_snapshot = create_binary_snapshot(app_exe.parent, from_version)
 
-        rollback_ready = self._write_rollback_plan(
-            from_version=from_version,
-            target_version=target_version,
-            backup=backup,
-            previous=previous,
-            snapshot=binary_snapshot,
-            app_exe=app_exe,
-            restart=bool(request.restart),
-        )
+            rollback_ready = self._write_rollback_plan(
+                from_version=from_version,
+                target_version=target_version,
+                backup=backup,
+                previous=previous,
+                snapshot=binary_snapshot,
+                app_exe=app_exe,
+                restart=bool(request.restart),
+            )
 
         pending = PendingUpdate(
             from_version=from_version,
@@ -1199,6 +1267,7 @@ class MainWindow(QMainWindow):
             binary_snapshot=str(binary_snapshot) if binary_snapshot else "",
             app_exe=str(app_exe),
             channel=self._settings.update_channel,
+            reinstall=reinstall,
         )
         try:
             write_pending_update(pending)
@@ -1214,7 +1283,11 @@ class MainWindow(QMainWindow):
                 "started",
                 from_version=from_version,
                 target_version=target_version,
-                message="Installing the downloaded update.",
+                message=(
+                    f"Reinstalling IDM {target_version}."
+                    if reinstall
+                    else "Installing the downloaded update."
+                ),
                 backup_dir=str(backup.directory),
             )
         except Exception:
@@ -1267,12 +1340,6 @@ class MainWindow(QMainWindow):
         restart: bool,
     ) -> bool:
         publisher = self._settings.update_publisher.strip()
-        if previous is not None and not publisher:
-            logger.warning(
-                "No trusted publisher is configured; the cached installer "
-                "cannot be used for rollback"
-            )
-            previous = None
         if previous is None and snapshot is None:
             logger.warning("No previous version is available for rollback")
             return False
@@ -1560,6 +1627,8 @@ class MainWindow(QMainWindow):
             )
 
     def _focus_search(self) -> None:
+        if self._content_stack.currentWidget() is self._downloads_page:
+            self._search.setVisible(True)
         self._search.setFocus()
         self._search.selectAll()
 
@@ -1571,6 +1640,12 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------------------------ filtering
     def _on_filter_changed(self, key: str) -> None:
+        if key == "scheduler":
+            self._open_scheduler()
+            if self._sidebar.current_key == "scheduler":
+                self._sidebar.select(self._last_content_key)
+            return
+        self._last_content_key = key
         self._proxy.set_filter_key(key)
         self._refresh_page_state()
 
@@ -1591,7 +1666,7 @@ class MainWindow(QMainWindow):
             self._update_actions()
             return
 
-        self._search.setVisible(True)
+        self._search.setVisible(self.width() >= 1200)
         self._content_stack.setCurrentWidget(self._downloads_page)
         self._page_title.setText(_FILTER_TITLES.get(key, "All Downloads"))
         visible = self._proxy.rowCount()
@@ -1621,6 +1696,12 @@ class MainWindow(QMainWindow):
             subtitle = f"{visible} in progress"
         elif key == "completed":
             subtitle = f"{visible} completed"
+        elif key == "queued":
+            subtitle = f"{visible} waiting for a slot"
+        elif key == "paused":
+            subtitle = f"{visible} paused or stopped"
+        elif key == "history":
+            subtitle = f"{visible} finished transfer{'s' if visible != 1 else ''}"
         else:
             category = CATEGORY_FILTER_KEYS.get(key, "")
             subtitle = f"{visible} file{'s' if visible != 1 else ''} in {category}"
@@ -1652,9 +1733,9 @@ class MainWindow(QMainWindow):
         self._update_actions()
 
     def _refresh_sidebar_counts(self, items: list[DownloadItem]) -> None:
-        self._sidebar.set_counts(
-            _sidebar_counts(items, self._unread_notifications())
-        )
+        unread = self._unread_notifications()
+        self._sidebar.set_counts(_sidebar_counts(items, unread))
+        self._toolbar.set_notifications(unread)
 
     def _refresh_sidebar_badges(self) -> None:
         self._refresh_sidebar_counts(self._manager.items())
@@ -1688,7 +1769,7 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------ theme
     def _on_theme_changed(self) -> None:
         p = self._theme.palette
-        self._search_action.setIcon(icons.icon("search", p.text_faint, 16))
+        self._toolbar.search_action.setIcon(icons.icon("search", p.text_faint, 16))
         for key, icon_name in self._action_icons.items():
             action = self._actions.get(key)
             if action is not None:
@@ -1855,6 +1936,9 @@ def _sidebar_counts(
         "video_downloads": 0,
         "downloading": 0,
         "completed": 0,
+        "queued": 0,
+        "paused": 0,
+        "history": 0,
         "documents": 0,
         "music": 0,
         "videos": 0,
@@ -1863,6 +1947,11 @@ def _sidebar_counts(
         "other": 0,
         "notifications": max(0, int(unread_notifications)),
     }
+    history_statuses = {
+        DownloadStatus.COMPLETED,
+        DownloadStatus.FAILED,
+        DownloadStatus.STOPPED,
+    }
     for item in items:
         if item.is_video:
             counts["video_downloads"] += 1
@@ -1870,6 +1959,12 @@ def _sidebar_counts(
             counts["downloading"] += 1
         if item.status == DownloadStatus.COMPLETED:
             counts["completed"] += 1
+        if item.status == DownloadStatus.QUEUED:
+            counts["queued"] += 1
+        if item.status in {DownloadStatus.PAUSED, DownloadStatus.STOPPED}:
+            counts["paused"] += 1
+        if item.status in history_statuses:
+            counts["history"] += 1
         for key, category in CATEGORY_FILTER_KEYS.items():
             if item.category == category:
                 counts[key] += 1

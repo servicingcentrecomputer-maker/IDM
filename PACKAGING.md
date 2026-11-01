@@ -1,7 +1,7 @@
 # IDM Packaging and Deployment Guide
 
 This document describes how to build, install, upgrade, uninstall and sign the
-Windows distribution of IDM (`IDM-Setup-3.0.0.exe`).
+Windows distribution of IDM (`IDM-Setup-3.5.0.exe`).
 
 ## Status
 
@@ -10,9 +10,9 @@ Windows distribution of IDM (`IDM-Setup-3.0.0.exe`).
 | PyInstaller onedir build (`dist\IDM\IDM.exe`) | Built and verified |
 | Native messaging host (`dist\IDM\IDM_NativeHost.exe`) | Built by the spec as a Qt-free one-file executable |
 | Browser extensions (`dist-extensions\*.zip`) | Basic Chrome/Edge/Firefox packages by `scripts\package_extensions.py`; IDM Video Assistant by `scripts\package_video_assistant.py` |
-| Standalone updater (`dist\IDM\IDM_Updater.exe`) | Built and verified (frozen `--version` exits 0; version resource 3.0.0.0) |
-| Inno Setup installer (`dist-installer\IDM-Setup-3.0.0.exe`) | Built and verified on Windows 11 x64 (browser registration tasks require Inno Setup to compile) |
-| Automated test suite | 460 tests passed |
+| Standalone updater (`dist\IDM\IDM_Updater.exe`) | Built and verified (frozen `--version` exits 0; version resource 3.5.0.0) |
+| Inno Setup installer (`dist-installer\IDM-Setup-3.5.0.exe`) | Built and verified on Windows 11 x64 (browser registration tasks require Inno Setup to compile) |
+| Automated test suite | 518 tests passed |
 | Automatic update system | Update checks and Ed25519-signed manifests are operational; automatic installation requires a CA-issued code-signing certificate |
 | Browser integration | Implemented and unit-tested; real browser interception requires manual verification |
 | Silent install / launch / uninstall / upgrade / data preservation | Passed on Windows 11 x64 |
@@ -65,8 +65,8 @@ they are run on a machine that has not seen them before. See
 | `dist-extensions\IDM_*_Extension.zip` | Chrome, Edge and Firefox packages with printed SHA-256 |
 | `dist-extensions\IDM_Video_Assistant_<version>.zip` | Unpacked IDM Video Assistant package with printed SHA-256 |
 | `dist\IDM\IDM_Updater.exe` | Standalone updater staged next to the app |
-| `dist-installer\IDM-Setup-3.0.0.exe` | Final installer |
-| `RELEASE_NOTES.md` | User-facing release notes copied into the release package |
+| `dist-installer\IDM-Setup-3.5.0.exe` | Final installer |
+| `ReleaseNotes.md` | User-facing release notes copied into the release package |
 | `release\IDM-<version>-win64\` | Generated release directory with docs, checksums and metadata |
 | `release\IDM-<version>-win64.zip` | Generated distributable archive (plus `.sha256` sidecar) |
 
@@ -102,7 +102,7 @@ release\IDM-<version>-win64\
   docs\README.md, PACKAGING.md, BROWSER_INTEGRATION.md,
        BROWSER_STORE_PUBLISHING.md, UPDATES.md
   README.txt
-  RELEASE_NOTES.md
+  ReleaseNotes.md
   VERSION.json
   SHA256SUMS.txt
 release\IDM-<version>-win64.zip
@@ -119,7 +119,7 @@ Before copying anything, the packager fails when:
 - `IDM_Setup.iss`, `version_info*.txt`, an extension manifest or an extension
   ZIP disagrees with `idm\version.py`
 - the installer or portable build requested by the command is missing
-- a documentation file or `RELEASE_NOTES.md` is missing
+- a documentation file or `ReleaseNotes.md` is missing
 
 It prints a warning, but still packages, when the installer or portable build
 is older than the newest runtime source change. Rebuild before publishing when
@@ -174,7 +174,7 @@ What the script does:
 11. Locates `ISCC.exe` (Inno Setup 6 or 7, Program Files or per-user install),
     or uses `-InnoSetupPath`.
 12. Runs Inno Setup with quiet progress output.
-13. Verifies `dist-installer\IDM-Setup-3.0.0.exe` and prints sizes and SHA256 hashes
+13. Verifies `dist-installer\IDM-Setup-3.5.0.exe` and prints sizes and SHA256 hashes
     for the app, the updater, the native host and the installer.
 
 The script refuses to overwrite an existing installer unless `-Force` is
@@ -187,7 +187,7 @@ installer.
 | --- | --- |
 | `-Python <path>` | Base interpreter used to create `.venv` |
 | `-InnoSetupPath <path>` | `ISCC.exe` or the Inno Setup directory |
-| `-Force` | Replace an existing `IDM-Setup-3.0.0.exe` without prompting |
+| `-Force` | Replace an existing `IDM-Setup-3.5.0.exe` without prompting |
 | `-RecreateVenv` | Delete and recreate `.venv` |
 | `-RegenerateAssets` | Rebuild `idm.ico` and the wizard bitmaps first |
 | `-SkipTests` | Skip pytest (not recommended for release) |
@@ -231,7 +231,7 @@ signed installer you publish; see [docs/UPDATES.md](docs/UPDATES.md).
 
 ### Interactive
 
-Run `IDM-Setup-3.0.0.exe` and follow the wizard. It offers:
+Run `IDM-Setup-3.5.0.exe` and follow the wizard. It offers:
 
 - Install for all users (requires elevation) or only the current user.
 - Installation folder, defaulting to `C:\Program Files\IDM` for all users or
@@ -249,7 +249,7 @@ user chooses an all-users installation.
 Current user, custom folder, desktop and startup shortcuts:
 
 ```bat
-IDM-Setup-3.0.0.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /CURRENTUSER ^
+IDM-Setup-3.5.0.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /CURRENTUSER ^
   /DIR="D:\Apps\IDM" /TASKS="desktopicon,startup" ^
   /LOG="%TEMP%\IDM_install.log"
 ```
@@ -257,7 +257,7 @@ IDM-Setup-3.0.0.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /CURRENTUSER ^
 All users (run from an elevated prompt):
 
 ```bat
-IDM-Setup-3.0.0.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /ALLUSERS ^
+IDM-Setup-3.5.0.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /ALLUSERS ^
   /DIR="C:\Program Files\IDM"
 ```
 
@@ -342,12 +342,13 @@ changed to 1.0.1, and one uninstall entry remained.
 ## Automatic updates
 
 The checker, downloader, verifier and standalone updater are implemented in
-this repository. 3.0.0 ships with the public GitHub endpoint and an Ed25519
+this repository. 3.5.0 ships with the public GitHub endpoint and an Ed25519
 manifest public key, so **Check for Updates** works and every manifest is
 signature-verified. `EXPECTED_PUBLISHER` is empty because no CA-issued
-code-signing certificate exists, so automatic installation is disabled: the UI
-offers **Download Installer**, which opens the GitHub release asset in the
-browser and never runs the package itself. Full setup, manifest schema, hosting
+code-signing certificate exists, so installation trusts the signed manifest and
+SHA-256 instead of Authenticode. The **Install Update** button downloads and
+installs the matching package after explicit consent; **Download Installer**
+remains available as a manual alternative. Full setup, manifest schema, hosting
 and publishing steps are in [docs/UPDATES.md](docs/UPDATES.md);
 `IDM-Update-Server/` remains the schema and CI scaffold for a separate manifest
 repository.
@@ -380,7 +381,7 @@ Configuration required before release:
 2. Publish the `IDM-Update-Server` repository with a real `latest.json` and a
    signed installer release asset.
 3. Sign `IDM.exe` and `IDM_Updater.exe` with the certificate whose subject
-   matches the configured publisher, then sign `IDM-Setup-3.0.0.exe`.
+   matches the configured publisher, then sign `IDM-Setup-3.5.0.exe`.
 
 Source checkouts and unpackaged runs cannot install updates automatically; the
 About dialog explains that the packaged updater is required. No signed
@@ -478,9 +479,10 @@ Current build hashes (rebuild produces new values):
 
 | Artifact | Size | SHA256 |
 | --- | --- | --- |
-| `dist\IDM\IDM.exe` | 4,572,410 bytes | `989AABCC8F72E8F58903CC2FA649AFE30727F85F560967D863CAB317758C52E0` |
-| `dist\IDM\IDM_Updater.exe` | 11,023,997 bytes | `30DA0699243AD5FEA0F1C61617950EBB1A3EC810095C0354A1D471DB7BDE8B95` |
-| `dist-installer\IDM-Setup-3.0.0.exe` | 47,540,528 bytes | `413F31B37F53E93372C957BA45D3255D607D908A4BCF4810999FAD7C0FB11D03` |
+| `dist\IDM\IDM.exe` | 5,054,578 bytes | `E3A29E7A1BCACC8880A0AD522BA86E9A35C5FCAC43FB93DA8594879B7679DDDA` |
+| `dist\IDM\IDM_Updater.exe` | 15,600,830 bytes | `32355C9C7476993F5331C43E3846CD98D36048702C0E8CB975289A839E99BC11` |
+| `dist\IDM\IDM_NativeHost.exe` | 8,288,307 bytes | `0708D040EB8A1E640A2704DD0AC79FC16DF5E0F441DDD76C9F29FFA9BEC9FB5E` |
+| `dist-installer\IDM-Setup-3.5.0.exe` | 62,232,645 bytes | `668071000940A666542F0471B76350F377CFF22D58AC6B52570C31F7FF8D49F6` |
 
 ## Code signing
 
@@ -496,7 +498,7 @@ All artifacts are currently `NotSigned`. Before distributing IDM publicly:
    publisher against the configured expected publisher and refuses the update
    on a mismatch, so the updater and installer must be signed by the same
    certificate you configure.
-4. Sign `IDM-Setup-3.0.0.exe` after Inno Setup finishes, then publish its real
+4. Sign `IDM-Setup-3.5.0.exe` after Inno Setup finishes, then publish its real
    SHA-256 in the update manifest. The setup signature is what the update
    system checks before launching it.
 
@@ -519,7 +521,7 @@ iscc installer\IDM_Setup.iss
 
 signtool sign /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 ^
   /f "C:\secure\idm-codesign.pfx" /p "<password>" ^
-  /d "IDM Setup" dist-installer\IDM-Setup-3.0.0.exe
+  /d "IDM Setup" dist-installer\IDM-Setup-3.5.0.exe
 ```
 
 The updater is copied from `dist\IDM_Updater.exe` into `dist\IDM\` by the

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -25,6 +26,11 @@ from .common import Card, NoticeBanner, PageScroll
 _BROWSERS = (
     ("chrome", "Google Chrome"),
     ("edge", "Microsoft Edge"),
+)
+
+_DIRECT_MEDIA_TYPES = (
+    "MP4", "WebM", "M4V", "MOV", "MKV", "AVI",
+    "MP3", "M4A", "AAC", "OGG", "WAV", "FLAC",
 )
 
 
@@ -54,10 +60,14 @@ class _BrowserRow(QFrame):
         text.addWidget(self.status)
         layout.addLayout(text, 1)
 
-        self.install_button = QPushButton("Install integration")
+        self.install_button = QPushButton("Enable")
         self.install_button.setObjectName("SubtleButton")
-        self.remove_button = QPushButton("Remove")
+        self.install_button.setToolTip(
+            "Register IDM's native messaging host for this browser"
+        )
+        self.remove_button = QPushButton("Disable")
         self.remove_button.setObjectName("DangerButton")
+        self.remove_button.setToolTip("Remove IDM's native messaging registration")
         layout.addWidget(self.install_button)
         layout.addWidget(self.remove_button)
 
@@ -161,6 +171,17 @@ class BrowserIntegrationPage(QWidget):
             "Load the unpacked extension once in each browser. IDM never "
             "installs browser extensions silently.",
         )
+        self._version_label = QLabel("Extension version: not found")
+        self._version_label.setObjectName("PanelCaption")
+        self._version_label.setWordWrap(True)
+        extension_card.add(self._version_label)
+        types = QLabel(
+            "Supported direct media types: " + ", ".join(_DIRECT_MEDIA_TYPES)
+            + ". Restricted platform pages are never scanned for streams."
+        )
+        types.setObjectName("HintLabel")
+        types.setWordWrap(True)
+        extension_card.add(types)
         extension_row = QHBoxLayout()
         extension_row.setSpacing(8)
         self._folder_label = QLabel()
@@ -200,6 +221,15 @@ class BrowserIntegrationPage(QWidget):
         )
         self._restart_button.setToolTip("Restart the local bridge connection")
 
+    def _read_extension_version(self, folder: Path) -> str:
+        manifest = folder / "manifest.json"
+        try:
+            data = json.loads(manifest.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return ""
+        version = data.get("version")
+        return str(version) if version else ""
+
     def showEvent(self, event) -> None:
         super().showEvent(event)
         QTimer.singleShot(0, self.refresh)
@@ -209,10 +239,15 @@ class BrowserIntegrationPage(QWidget):
         listening = bool(getattr(self._service, "is_listening", False))
         bridge = getattr(self._service, "bridge", None)
         port = getattr(bridge, "port", None)
+        connections = int(getattr(bridge, "connection_count", 0) or 0)
         if listening:
-            self._bridge_status.setText(
-                f"Listening on 127.0.0.1:{port}" if port else "Listening"
+            detail = (
+                f"{connections} browser connection{'s' if connections != 1 else ''} active"
+                if connections
+                else "no browser connected yet"
             )
+            location = f"127.0.0.1:{port}" if port else "local address"
+            self._bridge_status.setText(f"Listening on {location} · {detail}")
             self._bridge_status.setProperty("state", "ok")
         else:
             self._bridge_status.setText(
@@ -226,6 +261,12 @@ class BrowserIntegrationPage(QWidget):
         self._folder_label.setText(
             str(folder) if folder.is_dir() else
             "The extension files are not installed next to IDM."
+        )
+        version = self._read_extension_version(folder)
+        self._version_label.setText(
+            f"Extension version: {version}"
+            if version
+            else "Extension version: manifest.json was not found."
         )
 
         try:

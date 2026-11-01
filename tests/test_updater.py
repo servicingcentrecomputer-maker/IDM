@@ -32,6 +32,7 @@ from idm.updater.launcher import (
     updater_executable,
 )
 from idm.updater.package_verifier import SignatureInfo
+from idm.updater.state import read_install_result
 from idm.updater.updater import (
     _installer_error_text,
     installer_arguments,
@@ -83,6 +84,7 @@ def _run(handoff, **overrides):
         "restart_app": lambda _exe: None,
         "cleanup": lambda _path: True,
         "notify": lambda *_args, **_kwargs: None,
+        "result_writer": lambda *_args, **_kwargs: None,
     }
     values.update(overrides)
     return run_update(handoff, **values)
@@ -113,7 +115,6 @@ def test_handoff_rejects_installer_outside_update_dir(handoff, tmp_path):
     "changes,match",
     [
         ({"sha256": "abc"}, "SHA-256"),
-        ({"publisher": " "}, "publisher"),
         ({"target_version": "1.0"}, "target version"),
         ({"installer": Path("relative.exe")}, "absolute"),
         ({"update_dir": Path("relative")}, "absolute"),
@@ -125,6 +126,18 @@ def test_handoff_validation_rejects_bad_values(handoff, changes, match):
             handoff.update_dir / "update-handoff.json",
             replace(handoff, **changes),
         )
+
+
+def test_handoff_accepts_sha256_only_trust(handoff, update_dir):
+    path = update_dir / "update-handoff.json"
+    write_handoff(path, replace(handoff, publisher=""))
+    assert read_handoff(path).publisher == ""
+
+
+def test_handoff_round_trip_preserves_reinstall(handoff, update_dir):
+    path = update_dir / "update-handoff.json"
+    write_handoff(path, replace(handoff, reinstall=True))
+    assert read_handoff(path).reinstall is True
 
 
 def test_read_handoff_rejects_missing_file(tmp_path):
@@ -349,6 +362,19 @@ def test_run_update_waits_for_idm_to_close(handoff):
     assert called == []
 
 
+def test_run_update_installs_sha256_only_package(handoff):
+    commands = []
+    signature_calls = []
+    result = _run(
+        replace(handoff, publisher=""),
+        signature_runner=lambda path: signature_calls.append(path),
+        installer_runner=lambda command: commands.append(command) or 0,
+    )
+    assert result == 0
+    assert len(commands) == 1
+    assert signature_calls == []
+
+
 def test_run_update_refuses_invalid_signature(handoff):
     called = []
     cleaned = []
@@ -381,6 +407,44 @@ def test_run_update_marks_directory_when_cleanup_is_blocked(handoff):
     result = _run(handoff, cleanup=lambda _path: False)
     assert result == 0
     assert has_completion_marker(handoff.update_dir)
+
+
+def test_run_update_records_reinstall_success(handoff, tmp_path, monkeypatch):
+    monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))
+    result = run_update(
+        replace(handoff, reinstall=True),
+        signature_runner=_signed,
+        wait_for_parent=lambda *_args: True,
+        installer_runner=lambda _command: 0,
+        restart_app=lambda _exe: None,
+        cleanup=lambda _path: True,
+        notify=lambda *_args, **_kwargs: None,
+    )
+    assert result == 0
+    receipt = read_install_result()
+    assert receipt is not None
+    assert receipt.reinstall is True
+    assert receipt.success is True
+    assert receipt.target_version == "1.1.0"
+
+
+def test_run_update_records_cancelled_installer_result(handoff, tmp_path, monkeypatch):
+    monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))
+    result = run_update(
+        replace(handoff, reinstall=True),
+        signature_runner=_signed,
+        wait_for_parent=lambda *_args: True,
+        installer_runner=lambda _command: 1223,
+        restart_app=lambda _exe: None,
+        cleanup=lambda _path: True,
+        notify=lambda *_args, **_kwargs: None,
+    )
+    assert result == 5
+    receipt = read_install_result()
+    assert receipt is not None
+    assert receipt.success is False
+    assert receipt.exit_code == 1223
+    assert receipt.reinstall is True
 
 
 def test_installer_arguments_for_user_install(handoff):

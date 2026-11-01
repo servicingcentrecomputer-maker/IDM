@@ -16,6 +16,7 @@ from __future__ import annotations
 import io
 import os
 import struct
+import sys
 from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -30,11 +31,16 @@ LOGO_SVG = ROOT / "assets" / "logo.svg"
 LOGO_DIR = ROOT / "assets" / "logo"
 INSTALLER_ASSETS = ROOT / "installer" / "assets"
 
-BRAND_BLUE = "#0B63B0"
-BRAND_BLUE_LIGHT = "#2B9BE8"
-TEXT_DARK = "#15263A"
-TEXT_MUTED = "#5B6B80"
-BACKGROUND = "#F4F8FC"
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from idm.constants import APP_VERSION  # noqa: E402
+
+BRAND_BLUE = "#1D5BEA"
+BRAND_BLUE_LIGHT = "#3F7BFF"
+TEXT_DARK = "#0E1726"
+TEXT_MUTED = "#526079"
+BACKGROUND = "#F4F7FD"
 
 ICON_SIZES = (16, 20, 24, 32, 40, 48, 64, 128, 256)
 
@@ -160,11 +166,11 @@ def build_wizard_large(logo: Image.Image) -> Image.Image:
     draw = ImageDraw.Draw(image)
 
     # Soft vertical gradient behind the logo.
-    for y in range(150):
-        ratio = y / 149
+    for y in range(180):
+        ratio = y / 179
         color = tuple(
             int(start + (end - start) * ratio)
-            for start, end in zip((234, 244, 252), (247, 251, 254))
+            for start, end in zip((233, 240, 253), (248, 250, 255))
         )
         draw.line((0, y, width, y), fill=color)
 
@@ -182,9 +188,11 @@ def build_wizard_large(logo: Image.Image) -> Image.Image:
     )
     centered_text(draw, "Manager", 204, tagline_font, TEXT_MUTED, width)
 
-    draw.line((30, 232, width - 30, 232), fill="#D8E6F2", width=1)
+    draw.line((30, 232, width - 30, 232), fill="#DCE5F4", width=1)
     version_font = load_font("segoeui.ttf", 9)
-    centered_text(draw, "Version 1.0.0", 246, version_font, TEXT_MUTED, width)
+    centered_text(
+        draw, f"Version {APP_VERSION}", 246, version_font, TEXT_MUTED, width
+    )
     return image
 
 

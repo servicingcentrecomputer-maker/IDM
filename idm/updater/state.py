@@ -15,7 +15,11 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from ..core.paths import pending_update_file, update_history_file
+from ..core.paths import (
+    install_result_file,
+    pending_update_file,
+    update_history_file,
+)
 from .errors import UpdateStateError
 from .version_manager import Version, VersionError
 
@@ -38,6 +42,7 @@ class PendingUpdate:
     binary_snapshot: str = ""
     app_exe: str = ""
     channel: str = "stable"
+    reinstall: bool = False
 
     @property
     def rollback_available(self) -> bool:
@@ -49,6 +54,64 @@ class PendingOutcome:
     status: str
     pending: PendingUpdate | None = None
     message: str = ""
+
+
+@dataclass(frozen=True)
+class InstallResult:
+    target_version: str
+    success: bool
+    exit_code: int = 0
+    reinstall: bool = False
+    completed_at: str = ""
+
+
+def write_install_result(result: InstallResult, path: Path | None = None) -> Path:
+    try:
+        Version.parse(result.target_version)
+    except VersionError as exc:
+        raise UpdateStateError(
+            "The installer result target version is not valid."
+        ) from exc
+    target = Path(path) if path is not None else install_result_file()
+    _write_json(target, asdict(result))
+    return target
+
+
+def read_install_result(path: Path | None = None) -> InstallResult | None:
+    source = Path(path) if path is not None else install_result_file()
+    data = _read_json(source, missing_ok=True)
+    if data is None:
+        return None
+    if not isinstance(data, dict):
+        raise UpdateStateError("The installer result file is not valid.")
+    try:
+        exit_code = max(0, int(data.get("exit_code", 0)))
+    except (TypeError, ValueError) as exc:
+        raise UpdateStateError(
+            "The installer result exit code is not valid."
+        ) from exc
+    result = InstallResult(
+        target_version=str(data.get("target_version") or ""),
+        success=bool(data.get("success", False)),
+        exit_code=exit_code,
+        reinstall=bool(data.get("reinstall", False)),
+        completed_at=str(data.get("completed_at") or ""),
+    )
+    try:
+        Version.parse(result.target_version)
+    except VersionError as exc:
+        raise UpdateStateError(
+            "The installer result target version is not valid."
+        ) from exc
+    return result
+
+
+def clear_install_result(path: Path | None = None) -> None:
+    source = Path(path) if path is not None else install_result_file()
+    try:
+        source.unlink(missing_ok=True)
+    except OSError:
+        logger.debug("Could not remove the installer result file", exc_info=True)
 
 
 def write_pending_update(
@@ -69,6 +132,9 @@ def read_pending_update(path: Path | None = None) -> PendingUpdate | None:
         raise UpdateStateError("The pending update file is not valid.")
     values = {}
     for field in PendingUpdate.__dataclass_fields__:
+        if field == "reinstall":
+            values[field] = bool(data.get(field, False))
+            continue
         value = data.get(field, "")
         values[field] = "" if value is None else str(value)
     pending = PendingUpdate(**values)
@@ -132,6 +198,29 @@ def evaluate_pending_update(
     if pending is None:
         return PendingOutcome("none")
     current = str(current_version).strip()
+    if pending.reinstall:
+        try:
+            result = read_install_result()
+        except UpdateStateError:
+            logger.warning("The installer result could not be read", exc_info=True)
+            result = None
+        if result is not None and result.target_version == pending.target_version:
+            if result.success:
+                return PendingOutcome("succeeded", pending)
+            return PendingOutcome(
+                "not-installed",
+                pending,
+                f"The reinstall of IDM {pending.target_version} did not "
+                "finish. IDM is still installed and your data is intact.",
+            )
+        if current == pending.target_version:
+            return PendingOutcome("succeeded", pending)
+        return PendingOutcome(
+            "version-mismatch",
+            pending,
+            f"IDM reports version {current}, but the reinstall expected "
+            f"{pending.target_version}.",
+        )
     if current == pending.target_version:
         return PendingOutcome("succeeded", pending)
     if current == pending.from_version:
@@ -158,12 +247,17 @@ def finalize_pending_update(
         return outcome
 
     pending = outcome.pending
+    clear_install_result()
     if outcome.status == "succeeded":
         try:
             settings.database.quick_check()
         except Exception as exc:
             logger.exception("The database failed its integrity check")
-            message = "The database failed its integrity check after the update."
+            message = (
+                "The database failed its integrity check after the reinstall."
+                if pending.reinstall
+                else "The database failed its integrity check after the update."
+            )
             record_event(
                 "failure",
                 from_version=pending.from_version,
@@ -178,7 +272,11 @@ def finalize_pending_update(
             "success",
             from_version=pending.from_version,
             target_version=pending.target_version,
-            message="Update installed successfully.",
+            message=(
+                "Reinstall completed successfully."
+                if pending.reinstall
+                else "Update installed successfully."
+            ),
             backup_dir=pending.backup_dir,
         )
     else:
@@ -202,7 +300,14 @@ def _validate_pending(pending: PendingUpdate) -> None:
                 f"The pending update {field} is not a valid version."
             ) from exc
     if pending.from_version == pending.target_version:
-        raise UpdateStateError("The pending update target matches the source version.")
+        if not pending.reinstall:
+            raise UpdateStateError(
+                "The pending update target matches the source version."
+            )
+    elif pending.reinstall:
+        raise UpdateStateError(
+            "The pending reinstall must keep the installed version."
+        )
     if not pending.backup_dir.strip():
         raise UpdateStateError("The pending update has no backup directory.")
     for field in (

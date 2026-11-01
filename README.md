@@ -6,16 +6,20 @@ layout while using an original icon set, an SQLite-backed history, a real HTTP
 download engine, pause/resume with HTTP Range, a queue, schedules and three
 interface themes.
 
-The current build is Version 3.0.0. It adds a multi-page workspace with
-Dashboard, Video Downloads, All Downloads, Browser Integration, Download
-Analytics, Performance Monitor, Advanced Settings, Update Center and
-Notifications, plus light and dark themes. The complete application shell, the
-multi-connection segmented download engine and the redesigned interface are
-included. The engine supports HTTP
-Range transfers over up to 16 parallel connections, resumable segmented
-downloads that survive a restart, automatic retry, global and per-download
-speed limits, and a persistent queue. Servers that do not support Range fall
-back to a single connection automatically.
+The current build is Version 3.5.0. It replaces the classic layouts with a
+consistent, modern workspace built on a central design system: a collapsible
+navigation rail, live dashboard, virtualized download table with categories,
+video card grid, real Browser Assistant status, fourteen searchable Settings
+sections, a redesigned Update Center, light/dark/Follow-Windows themes and
+motion that respects the Windows reduced-motion preference. The complete
+application shell, the multi-connection segmented download engine and the
+browser integration are included. The engine supports HTTP Range transfers
+over up to 16 parallel connections, resumable segmented downloads that survive
+a restart, automatic retry, global and per-download speed limits, and a
+persistent queue. Servers that do not support Range fall back to a single
+connection automatically. The download engine, database, extensions, native
+messaging and updater are unchanged by the interface redesign; see
+[ReleaseNotes.md](ReleaseNotes.md).
 
 An About window with **Check for Updates** is included, backed by a real signed
 release manifest, resumable installer download, SHA-256 and Windows Authenticode
@@ -48,9 +52,9 @@ available for testing on this machine.
 A packaged build is produced by the build automation:
 
 - Application: `dist\IDM\IDM.exe`
-- Installer: `dist-installer\IDM-Setup-3.0.0.exe`
+- Installer: `dist-installer\IDM-Setup-3.5.0.exe`
 
-Run `IDM-Setup-3.0.0.exe` to install IDM, create shortcuts, optionally start it with
+Run `IDM-Setup-3.5.0.exe` to install IDM, create shortcuts, optionally start it with
 Windows, and register it in Add/Remove Programs. The browser integration page
 offers one optional task per detected browser; selecting it registers the
 native messaging host for the current user. Extension ZIP packages are shipped
@@ -65,12 +69,12 @@ IDs and store publishing are covered in
 
 ### Release package
 
-The 3.0.0 deliverables are assembled in `IDM_V3_Release\`: the portable
-application (`IDM.exe` with `_internal\`, `IDM_Updater.exe` and
-`IDM_NativeHost.exe`), `IDM-Setup-3.0.0.exe`, the unpacked
-`BrowserExtension\IDMVideoAssistant\`, and the release, changelog,
-installation, browser integration and update guides with `Checksums.txt`.
-Source remains editable in the repository root.
+The 3.5.0 deliverables are assembled in `release\IDM-3.5.0-win64\` and
+`release\IDM-3.5.0-win64.zip`: the portable application (`IDM.exe` with
+`_internal\`, `IDM_Updater.exe` and `IDM_NativeHost.exe`),
+`IDM-Setup-3.5.0.exe`, the unpacked `BrowserExtension\IDMVideoAssistant\`,
+the extension archives, release notes, changelog, design-system guide, testing
+report and `SHA256SUMS.txt`. Source remains editable in the repository root.
 
 `build_windows.ps1 -Package` assembles `release\IDM-<version>-win64\` and a
 matching ZIP after a successful build. The bundle contains the installer, the
@@ -177,7 +181,7 @@ Install it from the unpacked folder, or build its ZIP package:
 
 ```powershell
 .\.venv\Scripts\python.exe scripts\package_video_assistant.py
-# dist-extensions\IDM_Video_Assistant_3.0.0.zip, no CRX
+# dist-extensions\IDM_Video_Assistant_3.5.0.zip, no CRX
 ```
 
 Its [README](BrowserExtension/IDMVideoAssistant/README.md) and
@@ -300,15 +304,21 @@ Settings**, **User Interface**, **Themes** and **Updates**.
   it shows exactly:
   “You are using the latest version of IDM.”
 - An available release shows installed/latest versions, date, notes, mandatory
-  status, a clickable latest-version link and **Update Now**. Mandatory updates
-  still require explicit consent.
+  status, a clickable latest-version link and **Install Update**. Mandatory
+  updates still require explicit consent.
+- When the latest release is already installed and automatic installation is
+  available, the same button becomes **Reinstall <version>**, so a damaged
+  installation can be repaired with the same verified installer. Your
+  downloads, settings and history are kept.
 - Installation downloads the installer into `%TEMP%\IDM-Update-*`, verifies
-  SHA-256 and the expected Windows Authenticode publisher, saves settings and a
-  database backup, then hands off to `IDM_Updater.exe` and closes IDM. The
-  updater re-verifies the package, runs the signed Inno Setup installer with
-  normal Windows UAC, optionally restarts IDM and cleans up.
+  SHA-256 against the Ed25519-signed manifest and, when a publisher is
+  configured, the Windows Authenticode signature. It then saves settings and a
+  database backup, hands off to `IDM_Updater.exe` and closes IDM. The updater
+  re-verifies the package, runs the Inno Setup installer with normal Windows
+  UAC, optionally restarts IDM and cleans up.
 - Downgrades are never offered. HTTP, credential-bearing URLs, untrusted hosts
-  and unsigned/wrongly-signed packages are rejected.
+  and packages whose SHA-256 or configured Authenticode signature does not
+  match are rejected.
 - Configuration, signing, GitHub/custom hosting, publishing steps, security
   invariants and the tested scenarios are documented in
   [docs/UPDATES.md](docs/UPDATES.md). No endpoint or publisher is baked in.
@@ -485,7 +495,10 @@ idm/
     updater.py              Standalone installer process
 assets/                     Logo, toolbar icons, check/chevron SVG assets
 config.py                   Central production update configuration
-RELEASE_NOTES.md            User-facing release notes included in packages
+ReleaseNotes.md            User-facing release notes for this version
+CHANGELOG.md               Version history
+UI-Design-System.md        Design tokens, component rules and accessibility
+TestingReport.md           Automated and visual verification record
 scripts/                    Release build, hash, signing, validation and packaging tools
 IDM-Update-Server/          Separate public manifest repository scaffold
 update/latest.json          Local sample manifest (placeholders; not publishable)

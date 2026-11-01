@@ -1,12 +1,63 @@
-"""Classic application toolbar with the primary download actions."""
+"""Modern application toolbar for IDM 3.5."""
 
 from __future__ import annotations
 
 from PySide6.QtCore import QSize, Qt, Signal
-from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QToolButton, QVBoxLayout
+from PySide6.QtGui import QColor, QPainter, QPen
+from PySide6.QtWidgets import (
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QToolButton,
+    QVBoxLayout,
+    QWidget,
+)
 
-from . import icons
+from . import design, icons
 from .theme import ThemeManager
+
+
+class NotificationButton(QToolButton):
+    """Bell button that paints an unread badge without extra widgets."""
+
+    def __init__(self, theme: ThemeManager, parent=None) -> None:
+        super().__init__(parent)
+        self._theme = theme
+        self._count = 0
+        self.setObjectName("IconButton")
+        self.setIconSize(QSize(21, 21))
+        self.setFixedSize(40, 40)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setToolTip("Notifications")
+        self.setAccessibleName("Notifications")
+
+    def set_count(self, count: int) -> None:
+        self._count = max(0, int(count))
+        self.setToolTip(
+            "Notifications" if not self._count else f"Notifications ({self._count})"
+        )
+        self.update()
+
+    def paintEvent(self, event) -> None:
+        super().paintEvent(event)
+        if self._count <= 0:
+            return
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        p = self._theme.palette
+        text = "99+" if self._count > 99 else str(self._count)
+        width = max(16, 10 + 6 * len(text))
+        badge = self.rect().adjusted(self.width() - width - 3, 2, -3, -self.height() + 18)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(p.danger))
+        painter.drawRoundedRect(badge, 8, 8)
+        painter.setPen(QColor("#FFFFFF"))
+        font = painter.font()
+        font.setPointSizeF(7.0)
+        font.setBold(True)
+        painter.setFont(font)
+        painter.drawText(badge, int(Qt.AlignmentFlag.AlignCenter), text)
 
 
 class DownloadToolbar(QFrame):
@@ -20,20 +71,33 @@ class DownloadToolbar(QFrame):
     scheduler_requested = Signal()
     queue_requested = Signal()
     theme_toggled = Signal()
+    notifications_requested = Signal()
+    settings_requested = Signal()
+    sidebar_toggled = Signal()
 
     def __init__(self, theme: ThemeManager, parent=None) -> None:
         super().__init__(parent)
         self._theme = theme
         self.setObjectName("Toolbar")
-        self.setFixedHeight(64)
+        self.setFixedHeight(design.SURFACE.toolbar_height)
 
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(9, 6, 9, 6)
-        layout.setSpacing(2)
+        layout.setContentsMargins(14, 9, 16, 9)
+        layout.setSpacing(4)
+
+        self._sidebar_button = QToolButton()
+        self._sidebar_button.setObjectName("IconButton")
+        self._sidebar_button.setToolTip("Collapse or expand the sidebar (Ctrl+B)")
+        self._sidebar_button.setAccessibleName("Toggle sidebar")
+        self._sidebar_button.setFixedSize(40, 40)
+        self._sidebar_button.setIconSize(QSize(21, 21))
+        self._sidebar_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._sidebar_button.clicked.connect(self.sidebar_toggled)
+        layout.addWidget(self._sidebar_button)
 
         logo = QLabel()
-        logo.setPixmap(icons.logo_pixmap(28))
-        logo.setFixedSize(28, 28)
+        logo.setPixmap(icons.logo_pixmap(34))
+        logo.setFixedSize(34, 34)
         logo.setScaledContents(True)
 
         brand_text = QVBoxLayout()
@@ -47,16 +111,23 @@ class DownloadToolbar(QFrame):
         brand_text.addWidget(tagline)
 
         brand = QHBoxLayout()
-        brand.setContentsMargins(2, 0, 8, 0)
-        brand.setSpacing(7)
+        brand.setContentsMargins(4, 0, 14, 0)
+        brand.setSpacing(10)
         brand.addWidget(logo, 0, Qt.AlignmentFlag.AlignVCenter)
         brand.addLayout(brand_text)
         layout.addLayout(brand)
         layout.addWidget(self._separator())
 
         self.buttons: dict[str, QToolButton] = {}
-        self._add_button("add", "Add URL", "add_url", "Add a URL to download (Ctrl+N)", layout)
-        layout.addWidget(self._separator())
+        self._add_button(
+            "add",
+            "Add URL",
+            "add_url",
+            "Add a URL to download (Ctrl+N)",
+            layout,
+            primary=True,
+        )
+        layout.addSpacing(4)
         self._add_button("resume", "Resume", "resume", "Resume selected downloads (Ctrl+R)", layout)
         self._add_button(
             "resume_all",
@@ -64,33 +135,57 @@ class DownloadToolbar(QFrame):
             "resume_all",
             "Resume every paused download (Ctrl+Shift+R)",
             layout,
-            width=74,
         )
         self._add_button("pause", "Pause", "pause", "Pause selected downloads (Ctrl+P)", layout)
         self._add_button("stop", "Stop", "stop", "Stop selected downloads (Ctrl+Shift+S)", layout)
-        layout.addWidget(self._separator())
         self._add_button("delete", "Delete", "delete", "Remove selected downloads (Del)", layout)
         layout.addWidget(self._separator())
-        self._add_button("options", "Options", "options", "IDM options (Ctrl+,)", layout)
+        self._add_button("queue", "Queue", "queue", "Manage the download queue (Ctrl+Shift+Q)", layout)
         self._add_button(
             "scheduler",
             "Scheduler",
             "scheduler",
             "Schedule downloads (Ctrl+Shift+T)",
             layout,
-            width=72,
         )
-        self._add_button("queue", "Queue", "queue", "Manage the download queue (Ctrl+Shift+Q)", layout)
+        self._add_button("options", "Options", "options", "IDM options (Ctrl+,)", layout)
 
         layout.addStretch(1)
 
+        self.search_field = QLineEdit()
+        self.search_field.setObjectName("SearchBox")
+        self.search_field.setPlaceholderText("Search downloads…")
+        self.search_field.setClearButtonEnabled(True)
+        self.search_field.setFixedWidth(260)
+        self.search_field.setMinimumHeight(38)
+        self.search_field.setAccessibleName("Search downloads")
+        self.search_action = self.search_field.addAction(
+            icons.icon("search", theme.palette.text_faint, 16),
+            QLineEdit.ActionPosition.LeadingPosition,
+        )
+        layout.addWidget(self.search_field, 0, Qt.AlignmentFlag.AlignVCenter)
+
         self._theme_button = QToolButton()
         self._theme_button.setObjectName("ThemeButton")
-        self._theme_button.setIconSize(QSize(19, 19))
-        self._theme_button.setFixedSize(34, 34)
+        self._theme_button.setIconSize(QSize(20, 20))
+        self._theme_button.setFixedSize(40, 40)
         self._theme_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self._theme_button.clicked.connect(self.theme_toggled)
         layout.addWidget(self._theme_button, 0, Qt.AlignmentFlag.AlignVCenter)
+
+        self.notifications_button = NotificationButton(theme, self)
+        self.notifications_button.clicked.connect(self.notifications_requested)
+        layout.addWidget(self.notifications_button)
+
+        self.settings_button = QToolButton()
+        self.settings_button.setObjectName("IconButton")
+        self.settings_button.setToolTip("Settings")
+        self.settings_button.setAccessibleName("Settings")
+        self.settings_button.setFixedSize(40, 40)
+        self.settings_button.setIconSize(QSize(21, 21))
+        self.settings_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.settings_button.clicked.connect(self.settings_requested)
+        layout.addWidget(self.settings_button)
 
         self.buttons["add"].clicked.connect(self.add_requested)
         self.buttons["resume"].clicked.connect(self.resume_requested)
@@ -110,7 +205,7 @@ class DownloadToolbar(QFrame):
     def _separator() -> QFrame:
         separator = QFrame()
         separator.setObjectName("ToolbarSeparator")
-        separator.setFixedSize(1, 34)
+        separator.setFixedSize(1, 32)
         return separator
 
     def _add_button(
@@ -120,29 +215,51 @@ class DownloadToolbar(QFrame):
         icon_name: str,
         tooltip: str,
         layout: QHBoxLayout,
-        width: int = 64,
+        primary: bool = False,
     ) -> None:
         button = QToolButton()
         button.setObjectName("ToolbarButton")
         button.setText(text)
         button.setToolTip(tooltip)
-        button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
-        button.setIconSize(QSize(26, 26))
-        button.setFixedSize(width, 50)
-        button.setCursor(Qt.CursorShape.PointingHandCursor)
+        button.setAccessibleName(text)
         button.setProperty("icon_name", icon_name)
+        button.setCursor(Qt.CursorShape.PointingHandCursor)
+        if primary:
+            button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+            button.setProperty("accent", "true")
+            button.setIconSize(QSize(21, 21))
+            button.setFixedSize(126, 40)
+        else:
+            button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+            button.setIconSize(QSize(21, 21))
+            button.setFixedSize(40, 40)
         layout.addWidget(button)
         self.buttons[key] = button
 
     def _refresh_icons(self) -> None:
         p = self._theme.palette
-        for button in self.buttons.values():
-            icon_name = button.property("icon_name")
-            button.setIcon(icons.toolbar_icon(str(icon_name), 26))
-        self._theme_button.setIcon(icons.icon("palette", p.text_muted, 18))
+        for key, button in self.buttons.items():
+            icon_name = str(button.property("icon_name"))
+            if key == "add":
+                button.setIcon(icons.icon("add", "#FFFFFF", 20))
+            else:
+                button.setIcon(icons.icon(icon_name, p.text_muted, 20))
+        self._theme_button.setIcon(icons.icon("palette", p.text_muted, 19))
         self._theme_button.setToolTip(
             f"Theme: {self._theme.label} — click to change"
         )
+        self._sidebar_button.setIcon(icons.icon("sidebar", p.text_muted, 21))
+        self.settings_button.setIcon(icons.icon("options", p.text_muted, 21))
+        self.search_action.setIcon(icons.icon("search", p.text_faint, 17))
+        self.notifications_button.setIcon(icons.icon("bell", p.text_muted, 21))
+
+    def set_sidebar_collapsed(self, collapsed: bool) -> None:
+        self._sidebar_button.setToolTip(
+            "Expand the sidebar (Ctrl+B)" if collapsed else "Collapse the sidebar (Ctrl+B)"
+        )
+
+    def set_notifications(self, count: int) -> None:
+        self.notifications_button.set_count(count)
 
     def update_actions(
         self,

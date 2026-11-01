@@ -3,7 +3,16 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QModelIndex, QRect, QRectF, QSize, Qt
-from PySide6.QtGui import QColor, QFont, QFontMetrics, QIcon, QPainter, QPalette, QPen
+from PySide6.QtGui import (
+    QColor,
+    QFont,
+    QFontMetrics,
+    QIcon,
+    QLinearGradient,
+    QPainter,
+    QPalette,
+    QPen,
+)
 from PySide6.QtWidgets import (
     QApplication,
     QStyle,
@@ -64,7 +73,7 @@ class _BaseDelegate(QStyledItemDelegate):
 
     def sizeHint(self, option: QStyleOptionViewItem, index: QModelIndex) -> QSize:
         size = super().sizeHint(option, index)
-        return QSize(size.width(), 52)
+        return QSize(size.width(), 64)
 
 
 class NameDelegate(_BaseDelegate):
@@ -81,24 +90,24 @@ class NameDelegate(_BaseDelegate):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         p = self._theme.palette
 
-        outer = option.rect.adjusted(14, 0, -12, 0)
-        icon_box = QRect(outer.left(), outer.center().y() - 16, 32, 32)
+        outer = option.rect.adjusted(16, 0, -14, 0)
+        icon_box = QRect(outer.left(), outer.center().y() - 19, 38, 38)
         tint = QColor(icons.category_color(item.category))
-        tint.setAlpha(40 if self._is_selected(option) else 26)
+        tint.setAlpha(42 if self._is_selected(option) else 28)
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(tint)
-        painter.drawRoundedRect(QRectF(icon_box), 8, 8)
+        painter.drawRoundedRect(QRectF(icon_box), 11, 11)
 
-        cat_icon = icons.category_icon(item.category, size=18)
+        cat_icon = icons.category_icon(item.category, size=20)
         cat_icon.paint(
             painter,
-            icon_box.adjusted(7, 7, -7, -7),
+            icon_box.adjusted(9, 9, -9, -9),
             Qt.AlignmentFlag.AlignCenter,
             QIcon.Mode.Normal,
             QIcon.State.Off,
         )
 
-        text_left = icon_box.right() + 11
+        text_left = icon_box.right() + 13
         text_width = max(10, outer.right() - text_left)
         selected = self._is_selected(option)
         text_color = (
@@ -113,9 +122,9 @@ class NameDelegate(_BaseDelegate):
         )
 
         name_font = QFont(option.font)
-        name_font.setPointSizeF(max(8.5, option.font.pointSizeF() + 0.4))
+        name_font.setPointSizeF(max(9.0, option.font.pointSizeF() + 0.6))
         name_font.setWeight(QFont.Weight.DemiBold)
-        name_rect = QRect(text_left, icon_box.top() - 1, text_width, 20)
+        name_rect = QRect(text_left, icon_box.top() - 2, text_width, 22)
         painter.setFont(name_font)
         painter.setPen(text_color)
         name_metrics = QFontMetrics(name_font)
@@ -144,33 +153,39 @@ class NameDelegate(_BaseDelegate):
             label = "…"
 
         label_font = QFont(option.font)
-        label_font.setPointSizeF(max(7.5, option.font.pointSizeF() - 1.0))
-        label_width = QFontMetrics(label_font).horizontalAdvance("100%") + 6
-        bar_width = max(0, text_width - label_width - 8)
-        bar_rect = QRect(text_left, icon_box.top() + 26, bar_width, 5)
+        label_font.setPointSizeF(max(8.0, option.font.pointSizeF() - 0.8))
+        label_metrics = QFontMetrics(label_font)
+        label_width = max(
+            label_metrics.horizontalAdvance("100%"),
+            label_metrics.horizontalAdvance("Queued"),
+        ) + 8
+        bar_width = max(0, text_width - label_width - 10)
+        bar_rect = QRect(text_left, icon_box.top() + 27, bar_width, 6)
         bar_color = QColor(p.track)
-        fill_color = QColor(p.accent)
-        if item.status == DownloadStatus.FAILED:
-            fill_color = QColor(p.danger)
-        elif item.status in {DownloadStatus.PAUSED, DownloadStatus.STOPPED}:
-            fill_color = QColor(p.warning)
 
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(bar_color)
-        painter.drawRoundedRect(QRectF(bar_rect), 2.5, 2.5)
+        painter.drawRoundedRect(QRectF(bar_rect), 3, 3)
         if fraction and fraction > 0:
             fill_width = max(0.0, bar_rect.width() * min(1.0, fraction))
             if fill_width >= 1:
-                painter.setBrush(fill_color)
-                painter.drawRoundedRect(
-                    QRectF(bar_rect.left(), bar_rect.top(), fill_width, bar_rect.height()),
-                    2.5,
-                    2.5,
+                fill = QRectF(
+                    bar_rect.left(), bar_rect.top(), fill_width, bar_rect.height()
                 )
+                if item.status == DownloadStatus.FAILED:
+                    painter.setBrush(QColor(p.danger))
+                elif item.status in {DownloadStatus.PAUSED, DownloadStatus.STOPPED}:
+                    painter.setBrush(QColor(p.warning))
+                else:
+                    gradient = QLinearGradient(fill.topLeft(), fill.topRight())
+                    gradient.setColorAt(0.0, QColor(p.accent_hover))
+                    gradient.setColorAt(1.0, QColor(p.accent))
+                    painter.setBrush(gradient)
+                painter.drawRoundedRect(fill, 3, 3)
 
         painter.setFont(label_font)
         painter.setPen(muted_color)
-        label_rect = QRect(bar_rect.right() + 8, bar_rect.top() - 6, label_width, 16)
+        label_rect = QRect(bar_rect.right() + 8, bar_rect.top() - 6, label_width, 18)
         painter.drawText(
             label_rect,
             int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
@@ -194,25 +209,43 @@ class StatusDelegate(_BaseDelegate):
         p = self._theme.palette
         color = status_color(item.status, p)
 
-        dot_rect = QRect(option.rect.left() + 14, option.rect.center().y() - 3, 7, 7)
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(color)
-        painter.drawEllipse(dot_rect)
-
         font = QFont(option.font)
-        font.setPointSizeF(max(8.0, option.font.pointSizeF() - 0.2))
+        font.setPointSizeF(max(8.5, option.font.pointSizeF() - 0.2))
+        font.setWeight(QFont.Weight.DemiBold)
         painter.setFont(font)
-        text_color = (
-            option.palette.color(QPalette.ColorRole.HighlightedText)
-            if self._is_selected(option)
-            else color
+        metrics = QFontMetrics(font)
+        label = item.status.value
+
+        pill_width = min(
+            max(48, option.rect.width() - 24),
+            metrics.horizontalAdvance(label) + 30,
         )
-        painter.setPen(text_color)
-        text_rect = QRect(dot_rect.right() + 7, option.rect.top(), option.rect.width() - 32, option.rect.height())
+        pill = QRect(
+            option.rect.left() + 14,
+            option.rect.center().y() - 11,
+            pill_width,
+            22,
+        )
+        fill = QColor(color)
+        fill.setAlpha(46 if self._is_selected(option) else 32)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(fill)
+        painter.drawRoundedRect(pill, 11, 11)
+
+        painter.setBrush(color)
+        painter.drawEllipse(QRect(pill.left() + 9, pill.center().y() - 3, 6, 6))
+
+        painter.setPen(color)
+        text_rect = QRect(
+            pill.left() + 19,
+            pill.top(),
+            pill.width() - 23,
+            pill.height(),
+        )
         painter.drawText(
             text_rect,
             int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
-            item.status.value,
+            label,
         )
 
         self._paint_separator(painter, option)
@@ -245,7 +278,7 @@ class TextDelegate(_BaseDelegate):
             color = QColor(p.text)
         painter.setPen(color)
 
-        rect = option.rect.adjusted(12, 0, -10, 0)
+        rect = option.rect.adjusted(16, 0, -12, 0)
         metrics = QFontMetrics(font)
         elided = metrics.elidedText(text, Qt.TextElideMode.ElideRight, rect.width())
         painter.drawText(
@@ -287,27 +320,29 @@ class ProgressDelegate(_BaseDelegate):
         painter.setFont(font)
         label_width = QFontMetrics(font).horizontalAdvance("100%") + 8
         bar = QRect(
-            option.rect.left() + 12,
-            option.rect.center().y() - 2,
-            max(10, option.rect.width() - label_width - 24),
-            5,
+            option.rect.left() + 16,
+            option.rect.center().y() - 3,
+            max(10, option.rect.width() - label_width - 30),
+            6,
         )
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(QColor(p.track))
-        painter.drawRoundedRect(QRectF(bar), 2.5, 2.5)
+        painter.drawRoundedRect(QRectF(bar), 3, 3)
 
-        fill = QColor(p.accent)
-        if item.status == DownloadStatus.FAILED:
-            fill = QColor(p.danger)
-        elif item.status in {DownloadStatus.PAUSED, DownloadStatus.STOPPED}:
-            fill = QColor(p.warning)
         if fraction > 0:
             width = max(0.0, bar.width() * min(1.0, fraction))
             if width >= 1:
-                painter.setBrush(fill)
-                painter.drawRoundedRect(
-                    QRectF(bar.left(), bar.top(), width, bar.height()), 2.5, 2.5
-                )
+                fill_rect = QRectF(bar.left(), bar.top(), width, bar.height())
+                if item.status == DownloadStatus.FAILED:
+                    painter.setBrush(QColor(p.danger))
+                elif item.status in {DownloadStatus.PAUSED, DownloadStatus.STOPPED}:
+                    painter.setBrush(QColor(p.warning))
+                else:
+                    gradient = QLinearGradient(fill_rect.topLeft(), fill_rect.topRight())
+                    gradient.setColorAt(0.0, QColor(p.accent_hover))
+                    gradient.setColorAt(1.0, QColor(p.accent))
+                    painter.setBrush(gradient)
+                painter.drawRoundedRect(fill_rect, 3, 3)
 
         painter.setPen(label_color)
         label_rect = QRect(
@@ -346,7 +381,7 @@ class ValueDelegate(_BaseDelegate):
             color = QColor(p.text)
         painter.setPen(color)
 
-        rect = option.rect.adjusted(6, 0, -14, 0)
+        rect = option.rect.adjusted(8, 0, -16, 0)
         alignment = index.data(Qt.ItemDataRole.TextAlignmentRole)
         flags = Qt.AlignmentFlag(int(alignment)) if alignment else (
             Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter

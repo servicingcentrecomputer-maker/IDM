@@ -41,6 +41,7 @@ class UpdateHandoff:
     restart: bool
     update_dir: Path
     log_file: Path
+    reinstall: bool = False
 
     @property
     def app_dir(self) -> Path:
@@ -60,6 +61,7 @@ def write_handoff(path: Path, handoff: UpdateHandoff) -> Path:
         "app_exe": str(handoff.app_exe),
         "target_version": handoff.target_version,
         "restart": handoff.restart,
+        "reinstall": bool(handoff.reinstall),
         "update_dir": str(handoff.update_dir),
         "log_file": str(handoff.log_file),
     }
@@ -98,6 +100,9 @@ def read_handoff(path: Path) -> UpdateHandoff:
     restart = data.get("restart")
     if not isinstance(restart, bool):
         raise UpdaterError("The handoff restart flag is invalid.")
+    reinstall = data.get("reinstall", False)
+    if not isinstance(reinstall, bool):
+        raise UpdaterError("The handoff reinstall flag is invalid.")
     parent_pid = data.get("parent_pid")
     if not isinstance(parent_pid, int) or isinstance(parent_pid, bool) or parent_pid < 1:
         raise UpdaterError("The handoff process ID is invalid.")
@@ -112,6 +117,7 @@ def read_handoff(path: Path) -> UpdateHandoff:
         restart=restart,
         update_dir=_absolute_path(data.get("update_dir"), "update_dir"),
         log_file=_absolute_path(data.get("log_file"), "log_file"),
+        reinstall=reinstall,
     )
     validate_handoff_values(handoff)
     return handoff
@@ -120,8 +126,6 @@ def read_handoff(path: Path) -> UpdateHandoff:
 def validate_handoff_values(handoff: UpdateHandoff) -> None:
     if not _SHA256_RE.fullmatch(handoff.sha256):
         raise UpdaterError("The handoff SHA-256 value is invalid.")
-    if not handoff.publisher.strip():
-        raise UpdaterError("The handoff does not name a trusted publisher.")
     if handoff.installer.suffix.casefold() != ".exe":
         raise UpdaterError("The handoff installer must be an .exe file.")
     if not handoff.installer.is_absolute() or not handoff.update_dir.is_absolute():

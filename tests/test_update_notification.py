@@ -240,6 +240,7 @@ def test_main_window_manual_mode_skips_auto_download(window, monkeypatch):
         window, "_open_update_window", lambda *args, **kwargs: opened.append(args)
     )
     monkeypatch.setattr(window, "_show_update_notification", shown.append)
+    monkeypatch.setattr("config.MANIFEST_PUBLIC_KEY", "")
     window._settings.update_publisher = ""
     window._settings.update_auto_download = True
     window._on_update_available(_result())

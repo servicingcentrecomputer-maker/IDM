@@ -10,6 +10,7 @@ import pytest
 
 from idm.updater.errors import UpdateStateError
 from idm.updater.state import (
+    InstallResult,
     PendingUpdate,
     append_history,
     clear_pending_update,
@@ -18,6 +19,7 @@ from idm.updater.state import (
     load_history,
     read_pending_update,
     record_event,
+    write_install_result,
     write_pending_update,
 )
 
@@ -86,6 +88,129 @@ def test_pending_update_rejects_invalid_version(tmp_path):
     )
     with pytest.raises(UpdateStateError):
         read_pending_update(path)
+
+
+def test_reinstall_pending_update_round_trip(tmp_path):
+    pending = _pending(tmp_path, from_version="1.0.0", target_version="1.0.0")
+    pending = PendingUpdate(
+        from_version=pending.from_version,
+        target_version=pending.target_version,
+        started_at=pending.started_at,
+        backup_dir=pending.backup_dir,
+        db_backup=pending.db_backup,
+        app_exe=pending.app_exe,
+        reinstall=True,
+    )
+    path = tmp_path / "pending-update.json"
+    write_pending_update(pending, path=path)
+
+    loaded = read_pending_update(path)
+
+    assert loaded == pending
+    assert loaded.reinstall is True
+    assert loaded.rollback_available is False
+
+
+def test_reinstall_pending_update_requires_matching_versions(tmp_path):
+    with pytest.raises(UpdateStateError):
+        write_pending_update(
+            _pending(tmp_path, from_version="1.0.0", target_version="1.0.0"),
+            path=tmp_path / "pending.json",
+        )
+    with pytest.raises(UpdateStateError):
+        write_pending_update(
+            PendingUpdate(
+                from_version="1.0.0",
+                target_version="1.1.0",
+                started_at="2026-11-01T10:00:00+00:00",
+                backup_dir=str(tmp_path),
+                db_backup=str(tmp_path / "idm.sqlite3"),
+                reinstall=True,
+            ),
+            path=tmp_path / "pending.json",
+        )
+
+
+def test_evaluate_reinstall_success_and_mismatch(tmp_path, monkeypatch):
+    monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))
+    path = tmp_path / "pending-update.json"
+    pending = PendingUpdate(
+        from_version="1.0.0",
+        target_version="1.0.0",
+        started_at="2026-11-01T10:00:00+00:00",
+        backup_dir=str(tmp_path),
+        db_backup=str(tmp_path / "idm.sqlite3"),
+        reinstall=True,
+    )
+    write_pending_update(pending, path=path)
+
+    assert evaluate_pending_update("1.0.0", path).status == "succeeded"
+    mismatch = evaluate_pending_update("0.9.0", path)
+    assert mismatch.status == "version-mismatch"
+    assert "reinstall" in mismatch.message
+
+
+def test_evaluate_reinstall_uses_installer_result(tmp_path, monkeypatch):
+    monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))
+    path = tmp_path / "pending-update.json"
+    pending = PendingUpdate(
+        from_version="1.0.0",
+        target_version="1.0.0",
+        started_at="2026-11-01T10:00:00+00:00",
+        backup_dir=str(tmp_path),
+        db_backup=str(tmp_path / "idm.sqlite3"),
+        reinstall=True,
+    )
+    write_pending_update(pending, path=path)
+    write_install_result(
+        InstallResult(
+            target_version="1.0.0",
+            success=False,
+            exit_code=1223,
+            reinstall=True,
+        )
+    )
+
+    outcome = evaluate_pending_update("1.0.0", path)
+
+    assert outcome.status == "not-installed"
+    assert "did not finish" in outcome.message
+
+    write_install_result(
+        InstallResult(
+            target_version="1.0.0",
+            success=True,
+            exit_code=0,
+            reinstall=True,
+        )
+    )
+    assert evaluate_pending_update("1.0.0", path).status == "succeeded"
+
+
+def test_finalize_reinstall_records_success(tmp_path, monkeypatch):
+    monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))
+    path = tmp_path / "pending-update.json"
+    write_pending_update(
+        PendingUpdate(
+            from_version="1.0.0",
+            target_version="1.0.0",
+            started_at="2026-11-01T10:00:00+00:00",
+            backup_dir=str(tmp_path),
+            db_backup=str(tmp_path / "idm.sqlite3"),
+            reinstall=True,
+        ),
+        path=path,
+    )
+    settings = FakeSettings()
+
+    outcome = finalize_pending_update(settings, "1.0.0", path=path)
+
+    assert outcome.status == "succeeded"
+    assert settings.success_version == "1.0.0"
+    assert read_pending_update(path) is None
+    history = load_history()
+    assert history[0]["event"] == "success"
+    assert "Reinstall" in history[0]["message"]
 
 
 def test_pending_update_requires_absolute_backup_path(tmp_path):

@@ -7,7 +7,7 @@ const path = require("path");
 global.chrome = {
   runtime: {
     id: "ljckgbgnolmopacdgmmgaijleadcmpgn",
-    getManifest: () => ({ version: "3.0.0" }),
+    getManifest: () => ({ version: "3.5.0" }),
   },
 };
 const BASE = path.resolve(__dirname, "..", "BrowserExtension", "IDMVideoAssistant");

@@ -5,9 +5,10 @@ declared.  Do not hardcode update URLs anywhere else.
 
 The endpoint and manifest signing key are configured for the public IDM
 repository.  ``EXPECTED_PUBLISHER`` intentionally remains empty until a
-CA-issued Authenticode code-signing certificate is available: update checks
-and the signed manifest work, but automatic installation stays disabled and
-the UI offers a manual download instead.
+CA-issued Authenticode code-signing certificate is available.  Automatic
+installation is still available without it: the installer is trusted because
+its SHA-256 digest comes from the Ed25519-signed manifest.  When a publisher
+is configured, a valid Authenticode signature is required as well.
 
 ``UPDATE_MANIFEST_URL`` is derived from the GitHub owner, repository, branch
 and manifest path, so renaming the repository does not require editing any
@@ -82,10 +83,10 @@ ALLOWED_DOWNLOAD_HOSTS = [
 # Release trust
 # ---------------------------------------------------------------------------
 
-# REQUIRED for automatic installation: the exact Authenticode signer name
-# reported by Windows for IDM_Setup.exe.  Empty until a CA-issued code-signing
-# certificate is available; IDM then refuses to run an installer automatically
-# and offers a manual download instead.
+# Optional additional trust anchor: the exact Authenticode signer name reported
+# by Windows for IDM_Setup.exe.  Empty until a CA-issued code-signing certificate
+# is available.  Automatic installation still works through the Ed25519-signed
+# manifest and SHA-256; when this is set, a matching signature is also required.
 EXPECTED_PUBLISHER = ""
 
 # Base64 (standard alphabet) of the raw 32-byte Ed25519 public key used to sign

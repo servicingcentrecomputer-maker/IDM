@@ -44,6 +44,8 @@ _DEFAULTS: dict[str, Any] = {
     "show_sidebar": True,
     "show_status_bar": True,
     "show_download_list": True,
+    "sidebar_collapsed": False,
+    "ui_animations": True,
     "update_manifest_url": "",
     "update_publisher": "",
     "update_channel": app_config.UPDATE_CHANNEL,
@@ -61,7 +63,7 @@ _DEFAULTS: dict[str, Any] = {
     "download_type_rules": [],
 }
 
-_THEMES = {"classic", "light", "dark"}
+_THEMES = {"classic", "light", "dark", "system"}
 
 _LEGACY_KEYS = {
     "theme": "general/theme",
@@ -93,6 +95,8 @@ class AppSettings:
         self.show_sidebar: bool = _DEFAULTS["show_sidebar"]
         self.show_status_bar: bool = _DEFAULTS["show_status_bar"]
         self.show_download_list: bool = _DEFAULTS["show_download_list"]
+        self.sidebar_collapsed: bool = _DEFAULTS["sidebar_collapsed"]
+        self.ui_animations: bool = _DEFAULTS["ui_animations"]
         self.update_manifest_url: str = _DEFAULTS["update_manifest_url"]
         self.update_publisher: str = _DEFAULTS["update_publisher"]
         self.update_channel: str = _DEFAULTS["update_channel"]
@@ -193,6 +197,14 @@ class AppSettings:
         self.show_download_list = _coerce_bool(
             values.get("show_download_list", _DEFAULTS["show_download_list"]),
             _DEFAULTS["show_download_list"],
+        )
+        self.sidebar_collapsed = _coerce_bool(
+            values.get("sidebar_collapsed", _DEFAULTS["sidebar_collapsed"]),
+            _DEFAULTS["sidebar_collapsed"],
+        )
+        self.ui_animations = _coerce_bool(
+            values.get("ui_animations", _DEFAULTS["ui_animations"]),
+            _DEFAULTS["ui_animations"],
         )
         self.update_manifest_url = str(
             values.get("update_manifest_url", _DEFAULTS["update_manifest_url"])
@@ -302,6 +314,8 @@ class AppSettings:
             "show_sidebar",
             "show_status_bar",
             "show_download_list",
+            "sidebar_collapsed",
+            "ui_animations",
         ):
             if key in values:
                 setattr(self, key, bool(values[key]))
@@ -369,6 +383,8 @@ class AppSettings:
             "show_sidebar": self.show_sidebar,
             "show_status_bar": self.show_status_bar,
             "show_download_list": self.show_download_list,
+            "sidebar_collapsed": self.sidebar_collapsed,
+            "ui_animations": self.ui_animations,
             "update_manifest_url": self.update_manifest_url,
             "update_publisher": self.update_publisher,
             "update_channel": self.update_channel,

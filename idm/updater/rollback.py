@@ -293,8 +293,6 @@ def validate_plan(plan: RollbackPlan) -> None:
             raise RollbackError("The rollback installer path is invalid.")
         if not _SHA256_RE.fullmatch(plan.previous_installer_sha256):
             raise RollbackError("The rollback installer SHA-256 is invalid.")
-        if not plan.previous_publisher.strip():
-            raise RollbackError("The rollback installer has no trusted publisher.")
         if not installer.is_file():
             raise RollbackError("The rollback installer is missing.")
         if sha256_file(installer).lower() != plan.previous_installer_sha256.lower():
