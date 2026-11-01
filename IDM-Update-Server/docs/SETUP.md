@@ -104,7 +104,7 @@ Optional but recommended for high-value deployments:
 
    ```powershell
    .\.venv\Scripts\python.exe scripts\sign_manifest.py keygen `
-     --private-key C:\secure\idm-manifest.pem
+     --private-key C:\Users\<you>\.idm-signing\manifest-private.pem
    ```
 
 2. Put the printed base64 public key in IDM's `config.py`
@@ -114,7 +114,7 @@ Optional but recommended for high-value deployments:
    ```powershell
    .\.venv\Scripts\python.exe scripts\sign_manifest.py sign `
      --manifest IDM-Update-Server\latest.json `
-     --private-key C:\secure\idm-manifest.pem
+     --private-key C:\Users\<you>\.idm-signing\manifest-private.pem
    ```
 
 4. Set the repository variable `MANIFEST_PUBLIC_KEY` (Settings → Secrets and

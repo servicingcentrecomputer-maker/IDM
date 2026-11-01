@@ -250,7 +250,7 @@ compromised. SHA-256 alone is not trusted when a key is configured.
 
    ```powershell
    .\.venv\Scripts\python.exe scripts\sign_manifest.py keygen `
-     --private-key C:\secure\idm-manifest.pem
+     --private-key C:\Users\<you>\.idm-signing\manifest-private.pem
    ```
 
    The command prints the base64 public key and refuses to overwrite an existing
@@ -432,7 +432,7 @@ The repeatable workflow is
      -CertThumbprint <THUMBPRINT> `
      -Channel stable `
      -ReleaseNotes "Faster resume","Fixed queue ordering" `
-     -ManifestPrivateKey C:\secure\idm-manifest.pem
+     -ManifestPrivateKey C:\Users\<you>\.idm-signing\manifest-private.pem
    ```
 
    Use `-AllowUnsigned` only for an internal test build. A production release

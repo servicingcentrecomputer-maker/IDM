@@ -65,7 +65,7 @@
 
 .EXAMPLE
     $env:IDM_CODESIGN_PASSWORD = Read-Host -AsSecureString
-    .\scripts\build_release.ps1 -CertThumbprint ABCD... -ManifestPrivateKey C:\secure\manifest.pem -ReleaseNotes "Faster resume","Fixed queue" -Publish -PushManifest
+    .\scripts\build_release.ps1 -CertThumbprint ABCD... -ManifestPrivateKey C:\Users\<you>\.idm-signing\manifest-private.pem -ReleaseNotes "Faster resume","Fixed queue" -Publish -PushManifest
 #>
 [CmdletBinding()]
 param(

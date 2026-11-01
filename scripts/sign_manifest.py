@@ -5,8 +5,8 @@ The public key is embedded in ``config.py`` (``MANIFEST_PUBLIC_KEY``); the
 private key never leaves the release environment.
 
 Commands:
-    python scripts/sign_manifest.py keygen --private-key C:\\secure\\idm-manifest.pem
-    python scripts/sign_manifest.py sign --manifest latest.json --private-key C:\\secure\\idm-manifest.pem
+    python scripts/sign_manifest.py keygen --private-key C:\\Users\\<you>\\.idm-signing\\manifest-private.pem
+    python scripts/sign_manifest.py sign --manifest latest.json --private-key C:\\Users\\<you>\\.idm-signing\\manifest-private.pem
     python scripts/sign_manifest.py verify --manifest latest.json --public-key <base64>
 
 The signature covers canonical JSON of every field except manifest_signature.

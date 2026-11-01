@@ -48,7 +48,7 @@ The automated path:
 # Certificate in CurrentUser\My / LocalMachine\My (recommended: no password in process args)
 .\scripts\build_release.ps1 `
   -CertThumbprint <SHA1_THUMBPRINT> `
-  -ManifestPrivateKey C:\secure\idm-manifest.pem `
+  -ManifestPrivateKey C:\Users\<you>\.idm-signing\manifest-private.pem `
   -ReleaseNotes "Faster pause/resume","Fixed queue ordering" `
   -Channel stable `
   -Publish `
@@ -62,7 +62,7 @@ command-line argument:
 $env:IDM_CODESIGN_PASSWORD = Read-Host -AsSecureString
 .\scripts\build_release.ps1 `
   -PfxPath C:\secure\idm-codesign.pfx `
-  -ManifestPrivateKey C:\secure\idm-manifest.pem `
+  -ManifestPrivateKey C:\Users\<you>\.idm-signing\manifest-private.pem `
   -ReleaseNotesFile .\release-notes.txt `
   -Publish `
   -PushManifest
@@ -164,7 +164,7 @@ If signed manifests are enabled, sign it:
 ```powershell
 .\.venv\Scripts\python.exe scripts\sign_manifest.py sign `
   --manifest .\IDM-Update-Server\latest.json `
-  --private-key C:\secure\idm-manifest.pem
+  --private-key C:\Users\<you>\.idm-signing\manifest-private.pem
 ```
 
 ### Validate before publishing

@@ -13,7 +13,7 @@ narrative version is in `IDM-Update-Server/docs/PUBLISHING.md`.
 
    ```powershell
    .\.venv\Scripts\python.exe scripts\sign_manifest.py keygen `
-     --private-key C:\secure\idm-manifest.pem
+     --private-key C:\Users\<you>\.idm-signing\manifest-private.pem
    ```
 
    Embed only the printed public key in `config.py`. Store the private key
@@ -36,7 +36,7 @@ narrative version is in `IDM-Update-Server/docs/PUBLISHING.md`.
    ```powershell
    .\scripts\build_release.ps1 `
      -CertThumbprint <SHA1_THUMBPRINT> `
-     -ManifestPrivateKey C:\secure\idm-manifest.pem `
+     -ManifestPrivateKey C:\Users\<you>\.idm-signing\manifest-private.pem `
      -ReleaseNotes "Release note one","Release note two" `
      -Channel stable
    ```
@@ -56,7 +56,7 @@ narrative version is in `IDM-Update-Server/docs/PUBLISHING.md`.
    ```powershell
    .\scripts\build_release.ps1 `
      -CertThumbprint <SHA1_THUMBPRINT> `
-     -ManifestPrivateKey C:\secure\idm-manifest.pem `
+     -ManifestPrivateKey C:\Users\<you>\.idm-signing\manifest-private.pem `
      -ReleaseNotes "Release note one","Release note two" `
      -Channel stable `
      -Publish `
