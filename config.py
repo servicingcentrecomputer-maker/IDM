@@ -93,7 +93,7 @@ EXPECTED_PUBLISHER = ""
 # latest.json.  Every manifest must carry a valid ``manifest_signature`` or the
 # check fails.  The matching private key is kept offline outside this
 # repository; generate a pair with ``scripts/sign_manifest.py keygen``.
-MANIFEST_PUBLIC_KEY = "lGmE1PewtZOs/W27AX9jgd9NzBGj5FjJxKUNaKCtyu0="
+MANIFEST_PUBLIC_KEY = "IOPAnTyv1RFStYfuTPmK61Rvpf9HzzvFM4Q+FALboK8="
 
 # "stable" accepts only stable manifests.  "beta" accepts beta and stable
 # manifests.  The channel can also be chosen in Options -> Updates.
