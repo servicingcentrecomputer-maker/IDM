@@ -1,6 +1,6 @@
 # IDM UI Design System
 
-Version 3.5.0 ships one design system shared by every IDM surface. The system
+Version 3.6.0 ships one design system shared by every IDM surface. The system
 has two layers:
 
 1. **Design tokens** — framework-light values in `idm/ui/design.py`, consumed
@@ -14,7 +14,7 @@ reduced-motion settings stay consistent without per-widget special cases.
 
 ## Identity
 
-The 3.5.0 identity is deep navy and azure. The mark is an original squircle
+The 3.6.0 identity is deep navy and azure. The mark is an original squircle
 with an azure gradient, a light ring and a white download glyph; it is used at
 every size from 16 px window icons to the installer wizard. Toolbar and
 navigation actions use monochrome line glyphs from the same SVG vocabulary,
@@ -172,6 +172,7 @@ Shadows are suppressed when motion or animation effects are disabled.
 | Empty state | Icon, short explanation and a single recovery action. |
 | Video card | 128–144 px cinematic navy poster, quality/duration chips, metadata, gradient progress and a divided action row. |
 | Dashboard transfer row | 62 px minimum, category tile, live status colour, gradient progress and compact metadata. |
+| Download File Info dialog | Branded header with a 46 px gradient tile, eyebrow, title and transport badge; a scrollable body with the URL row, a gradient file hero card (56 px file-type tile, category pill, extension chip), a save-options card with icon-led category, file name, folder and description fields, and a compact server information card; fixed error line and a divided footer with Cancel, Download Later and the single primary Start Download. Unknown server values render as an em dash, never as invented text. |
 
 ## Layout and responsiveness
 
@@ -183,6 +184,10 @@ Shadows are suppressed when motion or animation effects are disabled.
 - Minimum supported window: 1040×600. The shell, download workspace, dialogs
   and both themes were reviewed at 1440×900; the automated suite exercises the
   1240×770 shell.
+- The Download File Info dialog opens at 800×920 where space allows, clamps to
+  the available screen minus 80 px, hides its footer hint below 720 px and
+  scrolls its body from a 640×560 floor so the footer actions stay reachable on
+  small displays.
 - All sizes are device-independent pixels; Qt handles Windows scaling.
 - Tables virtualize rows; video and card pages create widgets only for
   visible items and cache them.

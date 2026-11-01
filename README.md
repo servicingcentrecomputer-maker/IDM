@@ -6,20 +6,25 @@ layout while using an original icon set, an SQLite-backed history, a real HTTP
 download engine, pause/resume with HTTP Range, a queue, schedules and three
 interface themes.
 
-The current build is Version 3.5.0. It replaces the classic layouts with a
-consistent, modern workspace built on a central design system: a collapsible
-navigation rail, live dashboard, virtualized download table with categories,
-video card grid, real Browser Assistant status, fourteen searchable Settings
-sections, a redesigned Update Center, light/dark/Follow-Windows themes and
-motion that respects the Windows reduced-motion preference. The complete
-application shell, the multi-connection segmented download engine and the
-browser integration are included. The engine supports HTTP Range transfers
-over up to 16 parallel connections, resumable segmented downloads that survive
-a restart, automatic retry, global and per-download speed limits, and a
+The current build is Version 3.6.0. It adds a fully working **Download File
+Info** dialog for manual and browser downloads: server metadata is inspected
+with HEAD and a Range GET fallback, the file name, folder and category can be
+edited before anything starts, categories can be created by the user, a folder
+can be remembered per category, an optional description is stored with the task,
+and the dialog offers real **Start Download**, **Download Later** and **Cancel**
+actions. A browser download opens in the same dialog; cancelling there resumes
+the original browser transfer instead of discarding it. The 3.5.0 interface
+redesign remains: a consistent, modern workspace built on a central design
+system with a collapsible navigation rail, live dashboard, virtualized download
+table with categories, video card grid, real Browser Assistant status, fourteen
+searchable Settings sections, a redesigned Update Center, light/dark/Follow-
+Windows themes and motion that respects the Windows reduced-motion preference.
+The complete application shell, the multi-connection segmented download engine
+and the browser integration are included. The engine supports HTTP Range
+transfers over up to 16 parallel connections, resumable segmented downloads that
+survive a restart, automatic retry, global and per-download speed limits, and a
 persistent queue. Servers that do not support Range fall back to a single
-connection automatically. The download engine, database, extensions, native
-messaging and updater are unchanged by the interface redesign; see
-[ReleaseNotes.md](ReleaseNotes.md).
+connection automatically. See [ReleaseNotes.md](ReleaseNotes.md).
 
 An About window with **Check for Updates** is included, backed by a real signed
 release manifest, resumable installer download, SHA-256 and Windows Authenticode
@@ -52,9 +57,9 @@ available for testing on this machine.
 A packaged build is produced by the build automation:
 
 - Application: `dist\IDM\IDM.exe`
-- Installer: `dist-installer\IDM-Setup-3.5.0.exe`
+- Installer: `dist-installer\IDM-Setup-3.6.0.exe`
 
-Run `IDM-Setup-3.5.0.exe` to install IDM, create shortcuts, optionally start it with
+Run `IDM-Setup-3.6.0.exe` to install IDM, create shortcuts, optionally start it with
 Windows, and register it in Add/Remove Programs. The browser integration page
 offers one optional task per detected browser; selecting it registers the
 native messaging host for the current user. Extension ZIP packages are shipped
@@ -69,10 +74,10 @@ IDs and store publishing are covered in
 
 ### Release package
 
-The 3.5.0 deliverables are assembled in `release\IDM-3.5.0-win64\` and
-`release\IDM-3.5.0-win64.zip`: the portable application (`IDM.exe` with
+The 3.6.0 deliverables are assembled in `release\IDM-3.6.0-win64\` and
+`release\IDM-3.6.0-win64.zip`: the portable application (`IDM.exe` with
 `_internal\`, `IDM_Updater.exe` and `IDM_NativeHost.exe`),
-`IDM-Setup-3.5.0.exe`, the unpacked `BrowserExtension\IDMVideoAssistant\`,
+`IDM-Setup-3.6.0.exe`, the unpacked `BrowserExtension\IDMVideoAssistant\`,
 the extension archives, release notes, changelog, design-system guide, testing
 report and `SHA256SUMS.txt`. Source remains editable in the repository root.
 
@@ -127,18 +132,20 @@ Firefox-compatible Manifest V2 extension with a stable Gecko ID. They use only
 `nativeMessaging`, `downloads`, the context-menu API and `storage`.
 
 - Interception pauses the browser download, sends a validated request to
-  `IDM_NativeHost.exe`, and cancels the browser copy only after IDM replies
-  `download_accepted`. On any failure the browser download is resumed.
+  `IDM_NativeHost.exe`, and opens the Download File Info dialog. The browser
+  copy is cancelled only after IDM creates the task; on any failure or a
+  cancelled dialog the browser download is resumed.
 - The context menu adds **Download with IDM** and **Download with IDM to…** for
-  links; the second item always asks for a folder for that download.
+  links. Both open the review dialog; the second suppresses file-type rules so
+  the suggested folder starts from the default location.
 - The popup shows connected/disconnected state, interception toggle, active and
   queued counts, the default save folder, recent transfers, **Open IDM**,
   **Download Settings** and **Test Connection**.
-- The popup's **Ask where to save** toggle opens a folder picker for each
-  browser download (intercepted or from the link menu) without changing the
-  saved location mode. It is enabled by default so every browser download can
-  go to a folder of the user's choice; turn it off to use the saved location
-  automatically. Cancelling hands the download back to the browser.
+- The popup's **Ask where to save** toggle keeps the saved folder for each
+  download from being applied automatically, so the dialog starts from the
+  default folder. It is enabled by default; turn it off to let the saved
+  location mode and file-type rules suggest the folder. Cancelling the dialog
+  hands the download back to the browser.
 - Downloads appear in the normal queue with browser, URL, size and progress;
   pause, resume, stop, retry and history use the existing engine and SQLite
   storage.
@@ -181,7 +188,7 @@ Install it from the unpacked folder, or build its ZIP package:
 
 ```powershell
 .\.venv\Scripts\python.exe scripts\package_video_assistant.py
-# dist-extensions\IDM_Video_Assistant_3.5.0.zip, no CRX
+# dist-extensions\IDM_Video_Assistant_3.6.0.zip, no CRX
 ```
 
 Its [README](BrowserExtension/IDMVideoAssistant/README.md) and

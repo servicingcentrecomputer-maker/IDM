@@ -7,8 +7,10 @@ import sqlite3
 from idm.core.database import (
     _SCHEMA_V1,
     _SCHEMA_V2,
+    _SCHEMA_V4,
     _V2_DOWNLOAD_COLUMNS,
     _V3_DOWNLOAD_COLUMNS,
+    _V4_DOWNLOAD_COLUMNS,
     SCHEMA_VERSION,
     Database,
 )
@@ -235,15 +237,38 @@ def _create_v3_database(path) -> None:
         connection.close()
 
 
-def test_v3_database_migrates_to_v4_with_verified_backup(tmp_path) -> None:
+def _create_v4_database(path) -> None:
+    connection = sqlite3.connect(str(path))
+    try:
+        connection.executescript(_SCHEMA_V1)
+        connection.executescript(_SCHEMA_V2)
+        for name, declaration in (
+            _V2_DOWNLOAD_COLUMNS + _V3_DOWNLOAD_COLUMNS + _V4_DOWNLOAD_COLUMNS
+        ):
+            connection.execute(
+                f"ALTER TABLE downloads ADD COLUMN {name} {declaration}"
+            )
+        connection.executescript(_SCHEMA_V4)
+        connection.execute(
+            "INSERT INTO app_settings (key, value, kind) VALUES (?, ?, ?)",
+            ("theme", '"dark"', "json"),
+        )
+        connection.execute(_LEGACY_DOWNLOAD_SQL)
+        connection.execute("PRAGMA user_version = 4")
+        connection.commit()
+    finally:
+        connection.close()
+
+
+def test_v3_database_migrates_to_current_version_with_verified_backup(tmp_path) -> None:
     path = tmp_path / "v3.sqlite3"
     _create_v3_database(path)
 
     database = Database(path)
     try:
-        assert SCHEMA_VERSION == 4
+        assert SCHEMA_VERSION == 5
         version = database._connection.execute("PRAGMA user_version").fetchone()[0]
-        assert int(version) == 4
+        assert int(version) == 5
 
         backup = database.migration_backup_path
         assert backup is not None and backup.is_file()
@@ -260,6 +285,8 @@ def test_v3_database_migrates_to_v4_with_verified_backup(tmp_path) -> None:
         assert record["id"] == "legacy-1"
         assert record["media_kind"] == ""
         assert record["checksum_status"] == "not-requested"
+        assert record["description"] == ""
+        assert record["start_later"] == 0
         assert database.load_settings()["theme"] == "dark"
         assert {"media_metadata", "notifications", "download_events"}.issubset(
             _tables(database)
@@ -269,7 +296,45 @@ def test_v3_database_migrates_to_v4_with_verified_backup(tmp_path) -> None:
             "source_domain",
             "expected_sha256",
             "checksum_status",
+            "description",
+            "start_later",
         }.issubset(_columns(database, "downloads"))
+    finally:
+        database.close()
+
+
+def test_v4_database_migrates_to_v5_and_keeps_media_data(tmp_path) -> None:
+    path = tmp_path / "v4.sqlite3"
+    _create_v4_database(path)
+
+    database = Database(path)
+    try:
+        assert SCHEMA_VERSION == 5
+        assert (
+            int(database._connection.execute("PRAGMA user_version").fetchone()[0])
+            == 5
+        )
+
+        backup = database.migration_backup_path
+        assert backup is not None and backup.is_file()
+        check = sqlite3.connect(str(backup))
+        try:
+            assert check.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+            assert check.execute("PRAGMA user_version").fetchone()[0] == 4
+            assert check.execute("SELECT COUNT(*) FROM downloads").fetchone()[0] == 1
+        finally:
+            check.close()
+
+        record = database.load_downloads()[0]
+        assert record["id"] == "legacy-1"
+        assert record["media_kind"] == ""
+        assert record["checksum_status"] == "not-requested"
+        assert record["description"] == ""
+        assert record["start_later"] == 0
+        assert database.load_settings()["theme"] == "dark"
+        assert {"description", "start_later"}.issubset(
+            _columns(database, "downloads")
+        )
     finally:
         database.close()
 

@@ -1,19 +1,20 @@
 {
   "app_name": "IDM",
   "channel": "stable",
-  "latest_version": "3.5.0",
+  "latest_version": "3.6.0",
   "minimum_supported_version": "1.0.0",
   "release_date": "2026-11-01",
   "release_notes": [
-    "Complete modern redesign built on one central design system, with light, dark and Follow-Windows themes and immediate theme switching.",
-    "Collapsible navigation rail, contextual toolbar and accessible keyboard controls across Dashboard, downloads, Video Downloads, Browser Assistant, Scheduler, History and Settings.",
-    "Live dashboard and virtualized download list with search, sorting, categories and per-row progress that stay responsive with thousands of items.",
-    "Searchable Settings with fourteen sections and real actions for browser registration, verified backup and restore, update checks and diagnostics.",
-    "Download engine, SQLite schema v4, browser extensions, native messaging and the signed updater are unchanged; existing settings, history and partial downloads are preserved."
+    "Redesigned Download File Info dialog with a Windows 11-style branded header, file hero card, icon-led fields, server information card and an animated Start Download action.",
+    "Working Download File Info dialog for manual and browser downloads, with category detection, editable file name and folder, a remembered folder per category, an optional description and honest server metadata.",
+    "HEAD metadata with an aborting Range GET fallback reports size, type, last modified, resume support and server status without downloading the file.",
+    "Start Download, Download Later and Cancel are real actions; later tasks persist in the queue across restarts and start from the Queue Manager.",
+    "Browser downloads open the same dialog and the browser copy is cancelled only after IDM creates the task; cancelling resumes the original browser download.",
+    "Database schema v5 adds description and start_later after a verified backup; existing downloads, settings and partial files are preserved."
   ],
-  "download_url": "https://github.com/servicingcentrecomputer-maker/IDM/releases/download/v3.5.0/IDM-Setup-3.5.0.exe",
-  "sha256": "9ecfd18359a9c16578c897bac62d91f388c6fe30dd95ded8db25fefa54bbf852",
-  "package_size": 62404223,
+  "download_url": "https://github.com/servicingcentrecomputer-maker/IDM/releases/download/v3.6.0/IDM-Setup-3.6.0.exe",
+  "sha256": "a725d44dd55423d73c317dd84d565f7ccc9b97bbed1419618e5dc53f0138e85a",
+  "package_size": 62441387,
   "mandatory": false,
-  "manifest_signature": "FxXxTZYzFSYE9YARrpSQSDuabKbnfB1yQ8kZYXS6AD4eAGAh8p2rUN+ap8K0zg/06d9tFqEN6FA9immhABEIBg=="
+  "manifest_signature": "oZPY1R8g5ACKuPlKu5LN5JSRRnjK7zFv3SKboPVYJxLjcb1N87W3MUjEOMdHEpMEnCOtQwaqn/Ooes1BD0kQCQ=="
 }

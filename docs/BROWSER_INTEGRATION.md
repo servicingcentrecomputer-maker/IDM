@@ -48,7 +48,7 @@ stderr.
 
 ### Normal installation
 
-`IDM-Setup-3.5.0.exe` copies `IDM_NativeHost.exe` next to `IDM.exe` and offers one
+`IDM-Setup-3.6.0.exe` copies `IDM_NativeHost.exe` next to `IDM.exe` and offers one
 optional task per browser:
 
 - **Integrate with Google Chrome**
@@ -128,16 +128,22 @@ host allowlist with `IDM_CHROME_EXTENSION_ID`, `IDM_EDGE_EXTENSION_ID` and
    declared size and an optional `ask_folder` flag.
 4. The native host validates the message, checks the browser/extension
    allowlist, and forwards it over the authenticated loopback bridge.
-5. The desktop service validates again, resolves the destination folder and
-   adds the task to the existing `DownloadManager` queue.
-6. Only when the response is `download_accepted` does the extension cancel the
-   browser download. Otherwise it resumes the browser download and shows a
-   short error badge instead of losing the file.
+5. The desktop service validates again, rejects a URL that is already active,
+   and opens the **Download File Info** dialog with the detected category,
+   remembered or policy folder, filename and server metadata pre-filled.
+6. Choosing **Start Download** or **Download Later** creates the database record
+   and returns `download_accepted`. Only then does the extension cancel the
+   browser download. Cancelling the dialog returns `cancelled`, and any other
+   error resumes the browser download with a short error badge instead of losing
+   the file.
+
+Browser requests are handled one at a time: a request that arrives while the
+dialog is open queues behind it, and a duplicate URL is answered from the
+existing transfer without showing a second dialog.
 
 The right-click menu adds **Download with IDM** and **Download with IDM to…**
-for links. The first uses the saved location mode; the second sends
-`ask_folder: true` and always opens IDM's folder picker. Neither creates a
-hidden browser download.
+for links. Both open the same review dialog; neither creates a hidden browser
+download.
 
 The popup shows connection state, active/queued/total counts, the default save
 folder, recent transfers and the last error. It provides:
@@ -163,11 +169,14 @@ IDM supports three modes, stored in the SQLite settings database:
 | Ask every time | A folder dialog appears for each download; cancelling aborts it |
 | File type based | Extension rules choose a folder; unmatched files use the default |
 
-A request can also carry `ask_folder: true`. This is sent by the popup's
-**Ask where to save** toggle and by **Download with IDM to…**, and it opens the
-folder picker for that single download even when the saved mode is Default or
-File type. Cancelling the picker answers `cancelled`, so the extension resumes
-the browser download and IDM adds nothing.
+Every accepted browser request passes through IDM's **Download File Info**
+dialog, so the file name, category and destination can always be reviewed and
+changed before the task is created. A request can also carry
+`ask_folder: true`, sent by the popup's **Ask where to save** toggle and by
+**Download with IDM to…**; it suppresses a file-type rule for that request, so
+the dialog starts from the default folder rather than a rule's folder.
+Cancelling the dialog answers `cancelled`, so the extension resumes the browser
+download and IDM adds nothing.
 
 A rule is a folder plus a list of extensions (`zip`, `.pdf`, `*`). Rules are
 normalized (lowercase, no leading dot), duplicates are rejected, and only one

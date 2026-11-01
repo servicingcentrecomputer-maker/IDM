@@ -3,6 +3,41 @@
 All notable changes to IDM are recorded here. Versions follow semantic
 versioning (`MAJOR.MINOR.PATCH`).
 
+## [3.6.0] — 2026-11-01
+
+### Added
+
+- Working **Download File Info** dialog for manual, context-menu and browser
+  downloads: full-URL copy, category detection, editable file name and folder,
+  native folder picker, extension display, remembered folder per category,
+  optional description and a server-reported file information panel.
+- Link metadata detection with `HEAD`, a `Range: bytes=0-0` GET fallback,
+  redirect handling, request timeouts and honest unknown/unavailable states.
+- Start Download, Download Later and Cancel actions. Later tasks persist in the
+  queue across restarts and start from the Queue Manager.
+- Schema version 5 with `description` and `start_later` columns, a verified
+  pre-migration backup and non-destructive upgrade from versions 1–4.
+- Browser downloads now open the dialog and cancel the browser copy only after
+  IDM creates the task; cancelling resumes the original browser download.
+- Automated coverage for metadata detection, category handling, the dialog,
+  Download Later, the browser prompt, migrations and security rules.
+
+### Changed
+
+- The Download File Info dialog now uses a Windows 11-style layout with a
+  branded header, file hero card, icon-led fields, a compact server information
+  card, animated primary action and an adaptive 800×920 default size.
+- Browser requests are serialised behind the dialog; duplicate active URLs are
+  answered without a second prompt.
+- Chrome, Edge, Firefox and Video Assistant manifests are version 3.6.0.
+
+### Fixed
+
+- Server status labels now include 200, 204, 206, 301, 302 and 304 reasons
+  instead of a bare `HTTP <code>`.
+- Redirected metadata requests keep the URL the user entered while reporting
+  the final response headers.
+
 ## [3.5.0] — 2026-11-01
 
 ### Added

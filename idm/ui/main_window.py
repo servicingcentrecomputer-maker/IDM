@@ -78,7 +78,7 @@ from integrations.paths import native_manifest_dir
 from integrations.service import BrowserIntegrationService
 from . import design, icons
 from .dialogs.about import AboutDialog
-from .dialogs.add_download import AddDownloadDialog
+from .dialogs.download_file_info import AddDownloadDialog
 from .dialogs.options import OptionsDialog
 from .dialogs.progress import DownloadProgressDialog
 from .dialogs.queue import QueueDialog
@@ -112,6 +112,7 @@ _FILTER_TITLES = {
     "paused": "Paused",
     "history": "Download History",
     "documents": "Documents",
+    "images": "Images",
     "music": "Music",
     "videos": "Videos",
     "programs": "Programs",
@@ -189,6 +190,7 @@ class MainWindow(QMainWindow):
             self._manager,
             folder_prompt=self._prompt_browser_folder,
             create_prompt=self._confirm_create_folder,
+            download_prompt=self._prompt_browser_download,
             raise_window=self._raise_for_browser,
             open_settings=self._open_browser_settings,
             parent=self,
@@ -749,29 +751,36 @@ class MainWindow(QMainWindow):
         self._open_add_dialog("Videos")
 
     def _open_add_dialog(self, category: str | None) -> None:
+        def create_task(values: dict):
+            return self._manager.add_download(**values)
+
         dialog = AddDownloadDialog(
-            self._settings, self._theme, self, initial_category=category
+            self._settings,
+            self._theme,
+            self,
+            initial_category=category,
+            manager=self._manager,
+            submit_callback=create_task,
         )
         try:
             if dialog.exec() != AddDownloadDialog.DialogCode.Accepted:
                 return
             values = dialog.values()
+            item = dialog.created_item
         finally:
             dialog.deleteLater()
 
-        try:
-            item = self._manager.add_download(**values)
-        except ValueError as exc:
-            QMessageBox.warning(self, "Could not add download", str(exc))
-            return
-        except Exception as exc:  # defensive: never lose the message
-            logger.exception("Unexpected error adding download")
+        if item is None:
             QMessageBox.warning(
-                self, "Could not add download", f"Unexpected error: {exc}"
+                self, "Could not add download", "The download was not created."
             )
             return
 
-        if values["start_immediately"]:
+        if values.get("download_later"):
+            self._status_bar.show_message(
+                f"Added “{_shorten(item.filename, 48)}” to the queue for later."
+            )
+        elif values["start_immediately"]:
             self._status_bar.show_message(
                 f"Added “{_shorten(item.filename, 48)}” to the queue."
             )
@@ -949,6 +958,25 @@ class MainWindow(QMainWindow):
             QMessageBox.StandardButton.Yes,
         )
         return answer == QMessageBox.StandardButton.Yes
+
+    def _prompt_browser_download(self, request: dict, submit):
+        self._raise_for_browser()
+        dialog = AddDownloadDialog(
+            self._settings,
+            self._theme,
+            self,
+            initial_category=str(request.get("category") or ""),
+            initial_url=str(request.get("url") or ""),
+            initial_filename=str(request.get("filename") or ""),
+            manager=self._manager,
+            submit_callback=submit,
+        )
+        try:
+            if dialog.exec() != AddDownloadDialog.DialogCode.Accepted:
+                return None
+            return dialog.values(), dialog.created_item
+        finally:
+            dialog.deleteLater()
 
     def _set_theme(self, mode: str) -> None:
         if mode not in THEME_ORDER:
@@ -1939,11 +1967,13 @@ def _sidebar_counts(
         "queued": 0,
         "paused": 0,
         "history": 0,
+        "general": 0,
         "documents": 0,
         "music": 0,
         "videos": 0,
         "programs": 0,
         "compressed": 0,
+        "images": 0,
         "other": 0,
         "notifications": max(0, int(unread_notifications)),
     }

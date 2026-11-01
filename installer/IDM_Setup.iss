@@ -1,4 +1,4 @@
-; IDM 3.5.0 installer
+; IDM 3.6.0 installer
 ; Compile with Inno Setup 6.3+ or 7.x:
 ;   ISCC.exe installer\IDM_Setup.iss
 ;
@@ -23,8 +23,8 @@
 ; extension page or a store.
 
 #define MyAppName "IDM"
-#define MyAppVersion "3.5.0"
-#define MyAppVerName "IDM 3.5.0"
+#define MyAppVersion "3.6.0"
+#define MyAppVerName "IDM 3.6.0"
 #define MyAppPublisher "IDM"
 #define MyAppExeName "IDM.exe"
 #define NativeHostExeName "IDM_NativeHost.exe"
@@ -41,7 +41,7 @@ AppVersion={#MyAppVersion}
 AppVerName={#MyAppVerName}
 AppPublisher={#MyAppPublisher}
 AppCopyright=Copyright (C) 2026 IDM
-VersionInfoVersion=3.5.0.0
+VersionInfoVersion=3.6.0.0
 VersionInfoTextVersion={#MyAppVersion}
 VersionInfoCompany={#MyAppPublisher}
 VersionInfoDescription=IDM Setup
@@ -232,17 +232,68 @@ begin
            Path, mbError, MB_OK);
 end;
 
+function BrowserTaskSelected(Browser: String): Boolean;
+begin
+  if Browser = 'chrome' then
+    Result := ChromeTaskSelected()
+  else if Browser = 'edge' then
+    Result := EdgeTaskSelected()
+  else
+    Result := FirefoxTaskSelected();
+end;
+
+function BrowserInstalled(Browser: String): Boolean;
+begin
+  if Browser = 'chrome' then
+    Result := IsChromeInstalled()
+  else if Browser = 'edge' then
+    Result := IsEdgeInstalled()
+  else
+    Result := IsFirefoxInstalled();
+end;
+
+function HasOwnRegistration(Browser: String): Boolean;
+var
+  SubKey: String;
+  Manifest: String;
+  Value: String;
+begin
+  SubKey := NativeHostRegistryPath(Browser);
+  Manifest := ManifestPath(Browser);
+  Result :=
+    (RegQueryStringValue(HKCU, SubKey, '', Value) and
+     (CompareText(Value, Manifest) = 0)) or
+    (RegQueryStringValue(HKCU32, SubKey, '', Value) and
+     (CompareText(Value, Manifest) = 0));
+end;
+
+{ A silent install is an update, not a fresh setup: it must never remove an
+  existing registration just because /TASKS was not passed.  In that case the
+  registration is kept and repaired when it already points at this install. }
+function ShouldRegister(Browser: String): Boolean;
+begin
+  Result := BrowserInstalled(Browser) and
+    (BrowserTaskSelected(Browser) or
+     (WizardSilent and HasOwnRegistration(Browser)));
+end;
+
 function RegisterBrowser(Browser: String): Boolean;
 var
   SubKey: String;
+  Manifest: String;
   Value: String;
 begin
   Result := WriteManifest(Browser);
   if not Result then
     Exit;
   SubKey := NativeHostRegistryPath(Browser);
-  if not (RegQueryStringValue(HKCU, SubKey, '', Value) or
-          RegQueryStringValue(HKCU32, SubKey, '', Value)) then
+  Manifest := ManifestPath(Browser);
+  RegWriteStringValue(HKCU, SubKey, '', Manifest);
+  RegWriteStringValue(HKCU32, SubKey, '', Manifest);
+  if not ((RegQueryStringValue(HKCU, SubKey, '', Value) and
+           (CompareText(Value, Manifest) = 0)) or
+          (RegQueryStringValue(HKCU32, SubKey, '', Value) and
+           (CompareText(Value, Manifest) = 0))) then
   begin
     Result := False;
     MsgBox('IDM could not register its browser integration for ' + Browser + '.' +
@@ -258,35 +309,47 @@ var
   SubKey: String;
   Manifest: String;
   Value: String;
+  Owned: Boolean;
 begin
   SubKey := NativeHostRegistryPath(Browser);
   Manifest := ManifestPath(Browser);
+  Owned := False;
   if RegQueryStringValue(HKCU, SubKey, '', Value) and
      (CompareText(Value, Manifest) = 0) then
+  begin
     RegDeleteValue(HKCU, SubKey, '');
+    Owned := True;
+  end;
   if RegQueryStringValue(HKCU32, SubKey, '', Value) and
      (CompareText(Value, Manifest) = 0) then
+  begin
     RegDeleteValue(HKCU32, SubKey, '');
-  DeleteFile(Manifest);
+    Owned := True;
+  end;
+  { Never delete a manifest that the registry does not point at: another
+    registration (for example one written by scripts\register_native_host.py)
+    may still be using its own copy. }
+  if Owned then
+    DeleteFile(Manifest);
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
   if CurStep = ssPostInstall then
   begin
-    if ChromeTaskSelected() and IsChromeInstalled() then
+    if ShouldRegister('chrome') then
       RegisterBrowser('chrome')
-    else
+    else if not WizardSilent then
       UnregisterBrowser('chrome');
 
-    if EdgeTaskSelected() and IsEdgeInstalled() then
+    if ShouldRegister('edge') then
       RegisterBrowser('edge')
-    else
+    else if not WizardSilent then
       UnregisterBrowser('edge');
 
-    if FirefoxTaskSelected() and IsFirefoxInstalled() then
+    if ShouldRegister('firefox') then
       RegisterBrowser('firefox')
-    else
+    else if not WizardSilent then
       UnregisterBrowser('firefox');
 
     if (not WizardSilent) and

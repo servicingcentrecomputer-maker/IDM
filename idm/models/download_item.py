@@ -82,6 +82,8 @@ class DownloadItem:
     expected_sha256: str = ""
     checksum_status: str = "not-requested"
     integrity_verified_at: str = ""
+    description: str = ""
+    queued_later: bool = False
     segments: list[dict] = field(default_factory=list)
     created_at: datetime = field(default_factory=datetime.now)
     completed_at: datetime | None = None

@@ -24,7 +24,7 @@ from .paths import database_backup_dir, database_file, ensure_app_layout
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 _SCHEMA_V1 = """
 CREATE TABLE IF NOT EXISTS settings (
@@ -140,6 +140,14 @@ _V4_DOWNLOAD_COLUMNS = (
     ("integrity_verified_at", "TEXT NOT NULL DEFAULT ''"),
 )
 
+# Schema version 5 adds the optional per-download description shown in the
+# Download File Info dialog and the "Download Later" hold flag.  A held
+# download stays in the queue without starting until the user releases it.
+_V5_DOWNLOAD_COLUMNS = (
+    ("description", "TEXT NOT NULL DEFAULT ''"),
+    ("start_later", "INTEGER NOT NULL DEFAULT 0"),
+)
+
 _SCHEMA_V4 = """
 CREATE TABLE IF NOT EXISTS media_metadata (
     download_id      TEXT PRIMARY KEY,
@@ -220,6 +228,8 @@ _DOWNLOAD_COLUMNS = (
     "expected_sha256",
     "checksum_status",
     "integrity_verified_at",
+    "description",
+    "start_later",
 )
 
 # Fields that older callers may omit; their columns are NOT NULL.
@@ -234,6 +244,8 @@ _DOWNLOAD_DEFAULTS = {
     "expected_sha256": "",
     "checksum_status": "not-requested",
     "integrity_verified_at": "",
+    "description": "",
+    "start_later": 0,
 }
 
 _UPSERT_DOWNLOAD = f"""
@@ -360,6 +372,20 @@ class Database:
                 connection.commit()
                 logger.info("Migrated SQLite schema to version 4")
                 version = 4
+            if version < 5:
+                existing = {
+                    row["name"]
+                    for row in connection.execute("PRAGMA table_info(downloads)")
+                }
+                for name, declaration in _V5_DOWNLOAD_COLUMNS:
+                    if name not in existing:
+                        connection.execute(
+                            f"ALTER TABLE downloads ADD COLUMN {name} {declaration}"
+                        )
+                connection.execute("PRAGMA user_version = 5")
+                connection.commit()
+                logger.info("Migrated SQLite schema to version 5")
+                version = 5
             if version < SCHEMA_VERSION:
                 connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
                 connection.commit()

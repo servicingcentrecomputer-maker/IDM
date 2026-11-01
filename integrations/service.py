@@ -25,7 +25,8 @@ from downloads.location_manager import (
     resolve_destination,
 )
 from idm.core.settings import AppSettings
-from idm.core.url_utils import guess_filename
+from idm.core.categories import detect_category
+from idm.core.url_utils import guess_filename, redact_url
 from idm.engine.manager import DownloadManager
 from idm.models.download_item import DownloadItem
 from idm.version import APP_VERSION
@@ -49,6 +50,10 @@ logger = logging.getLogger(__name__)
 FolderPrompt = Callable[[str, str, str], str | None]
 CreatePrompt = Callable[[str], bool]
 SimpleCallback = Callable[[], None]
+DownloadSubmit = Callable[[dict[str, Any]], DownloadItem]
+DownloadPrompt = Callable[
+    [dict[str, Any], DownloadSubmit], tuple[dict[str, Any], DownloadItem] | None
+]
 
 _MAX_LISTED_DOWNLOADS = 25
 _STATUS_DOWNLOAD_LIMIT = 5
@@ -66,6 +71,7 @@ class BrowserIntegrationService(QObject):
         *,
         folder_prompt: FolderPrompt | None = None,
         create_prompt: CreatePrompt | None = None,
+        download_prompt: DownloadPrompt | None = None,
         raise_window: SimpleCallback | None = None,
         open_settings: SimpleCallback | None = None,
         parent: QObject | None = None,
@@ -76,6 +82,7 @@ class BrowserIntegrationService(QObject):
         self._manager = manager
         self._folder_prompt = folder_prompt
         self._create_prompt = create_prompt
+        self._download_prompt = download_prompt
         self._raise_window = raise_window
         self._open_settings = open_settings
         self._dedupe = DuplicateTracker()
@@ -297,6 +304,17 @@ class BrowserIntegrationService(QObject):
             normalized["url"], "download"
         )
 
+        if self._download_prompt is not None:
+            return self._accept_with_dialog(
+                request_id,
+                normalized,
+                browser,
+                config,
+                default_folder,
+                filename,
+                now,
+            )
+
         ask = None
         if config.mode == MODE_ASK:
             ask = lambda name, suggested: self._ask_for_folder(  # noqa: E731
@@ -332,7 +350,7 @@ class BrowserIntegrationService(QObject):
             browser,
             item.id,
             item.filename,
-            normalized["url"],
+            redact_url(normalized["url"]),
         )
 
         response = response_ok(
@@ -342,6 +360,98 @@ class BrowserIntegrationService(QObject):
             download=self._download_payload(item),
         )
         self._dedupe.put(request_id, response, now)
+        self._announce_accepted(item, normalized, browser)
+        return response
+
+    def _accept_with_dialog(
+        self,
+        request_id: str,
+        normalized: dict[str, Any],
+        browser: str,
+        config: DownloadLocationConfig,
+        default_folder: str,
+        filename: str,
+        now: float,
+    ) -> dict[str, Any]:
+        """Let the user review the browser download before IDM takes it.
+
+        The dialog creates the task itself through ``submit`` so it only closes
+        after the database row exists.  A cancelled dialog answers with the
+        ``cancelled`` code, which tells the extension to resume the original
+        browser download instead of discarding it.
+        """
+        custom = getattr(self._settings, "custom_categories", [])
+        category = detect_category(filename, normalized["mime"], custom)
+        remembered = self._settings.remembered_folder(category)
+        suggested_folder = remembered or config.folder_for(filename, default_folder)
+
+        payload = {
+            "url": normalized["url"],
+            "filename": filename,
+            "folder": suggested_folder,
+            "category": category,
+            "content_type": normalized["mime"],
+            "total_bytes": normalized["total_bytes"],
+            "source_browser": browser,
+            "referrer": normalized["referrer"],
+            "page_url": normalized["page_url"],
+            "page_title": normalized["page_title"],
+            "ask_folder": normalized["ask_folder"],
+        }
+
+        def submit(values: dict[str, Any]) -> DownloadItem:
+            merged = dict(values)
+            merged.update(
+                {
+                    "source_browser": browser,
+                    "referrer": normalized["referrer"],
+                    "content_type": (
+                        normalized["mime"] or str(values.get("content_type") or "")
+                    ),
+                    "page_url": normalized["page_url"],
+                    "page_title": normalized["page_title"],
+                    "quality_label": normalized["quality_label"],
+                    "duration_seconds": normalized["duration_seconds"],
+                    "detected_by": normalized["detected_by"],
+                    "media_kind_hint": normalized["media_kind"],
+                }
+            )
+            merged.pop("source_browser_override", None)
+            return self._manager.add_download(**merged)
+
+        result = self._download_prompt(payload, submit)  # type: ignore[misc]
+        if result is None:
+            response = response_error(
+                request_id, "cancelled", "The download was cancelled in IDM."
+            )
+            self._dedupe.put(request_id, response, now)
+            logger.info(
+                "Browser request %s was cancelled in the Download File Info dialog",
+                request_id,
+            )
+            return response
+
+        _values, item = result
+        response = response_ok(
+            request_id,
+            "download_accepted",
+            duplicate=False,
+            download=self._download_payload(item),
+        )
+        self._dedupe.put(request_id, response, now)
+        logger.info(
+            "Accepted %s download %s (%s) from %s",
+            browser,
+            item.id,
+            item.filename,
+            redact_url(normalized["url"]),
+        )
+        self._announce_accepted(item, normalized, browser)
+        return response
+
+    def _announce_accepted(
+        self, item: DownloadItem, normalized: dict[str, Any], browser: str
+    ) -> None:
         self.download_accepted.emit(item)
         self.message.emit(
             f"Added “{_shorten(item.filename, 48)}” from "
@@ -352,7 +462,6 @@ class BrowserIntegrationService(QObject):
                 self._download_accepted_hook(item, normalized)
             except Exception:
                 logger.debug("Accepted-download hook failed", exc_info=True)
-        return response
 
     def _ask_for_folder(
         self, filename: str, default_folder: str, browser: str

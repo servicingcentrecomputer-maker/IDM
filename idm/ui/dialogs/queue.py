@@ -43,7 +43,8 @@ class QueueDialog(BaseDialog):
         root.addWidget(
             make_header(
                 "Download queue",
-                "Downloads start automatically when a slot is free. Up to "
+                "Downloads start automatically when a slot is free. Items marked "
+                "“Later” wait until you choose Start now. Up to "
                 f"{manager.max_concurrent} run at once; raise a file to start it sooner.",
             )
         )
@@ -52,9 +53,11 @@ class QueueDialog(BaseDialog):
         self._info.setObjectName("HintLabel")
         root.addWidget(self._info)
 
-        self._table = QTableWidget(0, 4)
+        self._table = QTableWidget(0, 5)
         self._table.setObjectName("DialogTable")
-        self._table.setHorizontalHeaderLabels(("#", "File name", "Size", "Added"))
+        self._table.setHorizontalHeaderLabels(
+            ("#", "File name", "Size", "State", "Added")
+        )
         self._table.verticalHeader().setVisible(False)
         self._table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self._table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
@@ -68,9 +71,11 @@ class QueueDialog(BaseDialog):
         self._table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         self._table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
         self._table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)
+        self._table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.Fixed)
         self._table.setColumnWidth(0, 46)
         self._table.setColumnWidth(2, 105)
-        self._table.setColumnWidth(3, 140)
+        self._table.setColumnWidth(3, 78)
+        self._table.setColumnWidth(4, 140)
         self._table.itemSelectionChanged.connect(self._update_buttons)
 
         self._empty = self._build_empty_state()
@@ -87,8 +92,14 @@ class QueueDialog(BaseDialog):
         self._down_button.setIcon(icons.icon("arrow_down", theme.palette.text_muted, 16))
         self._up_button.clicked.connect(lambda: self._move(-1))
         self._down_button.clicked.connect(lambda: self._move(1))
+        self._start_button = secondary_button("Start now")
+        self._start_button.setIcon(
+            icons.icon("resume", theme.palette.text_muted, 14)
+        )
+        self._start_button.clicked.connect(self._start_now)
         actions_row.addWidget(self._up_button)
         actions_row.addWidget(self._down_button)
+        actions_row.addWidget(self._start_button)
         actions_row.addStretch(1)
         root.addLayout(actions_row)
 
@@ -130,7 +141,13 @@ class QueueDialog(BaseDialog):
     def _refresh(self) -> None:
         queued = self._manager.queue_items()
         selected_id = self._selected_id()
-        self._info.setText(f"{len(queued)} waiting   ·   up to {self._manager.max_concurrent} active at once")
+        held_only = sum(1 for item in queued if item.queued_later)
+        detail = f"{len(queued)} waiting"
+        if held_only:
+            detail += f"   ·   {held_only} set for later"
+        self._info.setText(
+            f"{detail}   ·   up to {self._manager.max_concurrent} active at once"
+        )
 
         self._table.setUpdatesEnabled(False)
         self._table.setRowCount(len(queued))
@@ -143,9 +160,17 @@ class QueueDialog(BaseDialog):
             name.setToolTip(item.url)
             size = QTableWidgetItem(format_size(item.total_bytes) if item.total_bytes else "—")
             size.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            state = QTableWidgetItem("Later" if item.queued_later else "Waiting")
+            state.setForeground(
+                QColor(
+                    self._theme.palette.warning
+                    if item.queued_later
+                    else self._theme.palette.text_muted
+                )
+            )
             added = QTableWidgetItem(item.created_at.strftime("%b %d, %H:%M"))
             added.setForeground(QColor(self._theme.palette.text_faint))
-            for column, cell in enumerate((number, name, size, added)):
+            for column, cell in enumerate((number, name, size, state, added)):
                 self._table.setItem(row, column, cell)
             if item.id == selected_id:
                 selected_row = row
@@ -169,9 +194,19 @@ class QueueDialog(BaseDialog):
     def _update_buttons(self) -> None:
         row = self._table.currentRow()
         count = self._table.rowCount()
-        has_selection = self._selected_id() is not None
+        download_id = self._selected_id()
+        has_selection = download_id is not None
+        item = self._manager.get(download_id) if download_id else None
         self._up_button.setEnabled(has_selection and 0 < row < count)
         self._down_button.setEnabled(has_selection and 0 <= row < count - 1)
+        self._start_button.setEnabled(bool(item and item.queued_later))
+
+    def _start_now(self) -> None:
+        download_id = self._selected_id()
+        if not download_id:
+            return
+        self._manager.start_queued([download_id])
+        self._refresh()
 
     def _move(self, delta: int) -> None:
         download_id = self._selected_id()

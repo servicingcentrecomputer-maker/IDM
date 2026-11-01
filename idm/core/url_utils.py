@@ -8,7 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
-from ..constants import CATEGORY_OTHER, EXTENSION_TO_CATEGORY
+from ..constants import CATEGORY_GENERAL, EXTENSION_TO_CATEGORY
 
 _ALLOWED_SCHEMES = {"http", "https"}
 _WINDOWS_RESERVED = {
@@ -63,6 +63,24 @@ def host_of(url: str) -> str:
         return (urlparse(url).hostname or "").lower()
     except ValueError:
         return ""
+
+
+def redact_url(url: str) -> str:
+    """Return a log-safe identifier that cannot leak tokens or credentials."""
+    try:
+        parsed = urlparse(url)
+    except ValueError:
+        return "[invalid-url]"
+    scheme = parsed.scheme.lower()
+    if scheme not in _ALLOWED_SCHEMES or not parsed.hostname:
+        return "[redacted-url]"
+    port = ""
+    try:
+        if parsed.port and parsed.port not in {80, 443}:
+            port = f":{parsed.port}"
+    except ValueError:
+        port = ""
+    return f"{scheme}://{parsed.hostname}{port}/…"
 
 
 def sanitize_filename(name: str, fallback: str = "download") -> str:
@@ -129,7 +147,7 @@ def extension_of(filename: str) -> str:
 
 
 def category_for_filename(filename: str) -> str:
-    return EXTENSION_TO_CATEGORY.get(extension_of(filename), CATEGORY_OTHER)
+    return EXTENSION_TO_CATEGORY.get(extension_of(filename), CATEGORY_GENERAL)
 
 
 def _part_name(filename: str) -> str:

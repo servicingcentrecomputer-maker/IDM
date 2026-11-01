@@ -6,7 +6,7 @@ no CRX file is used.
 
 ## Before you start
 
-- Install **IDM 3.5.0** and start it once.
+- Install **IDM 3.6.0** and start it once.
 - Use **Chrome 102+** or **Edge 102+**.
 - Decide which IDM browser extension you want in the profile. The basic
   **IDM Integration Module** and **IDM Video Assistant** share the pinned ID
@@ -24,7 +24,7 @@ application.
 
 ### Option A — IDM installer (recommended)
 
-1. Run `IDM-Setup-3.5.0.exe`.
+1. Run `IDM-Setup-3.6.0.exe`.
 2. On the optional tasks page, select:
    - **Integrate with Google Chrome**, and/or
    - **Integrate with Microsoft Edge**.
@@ -75,7 +75,7 @@ intended only for development.
 4. Select the folder that contains `manifest.json`, for example:
    - Source folder: `D:\IDM\BrowserExtension\IDMVideoAssistant`
    - Release folder: `D:\IDM\IDM_V3_Release\BrowserExtension\IDMVideoAssistant`
-5. The card should read **IDM Video Assistant 3.5.0** and show the ID
+5. The card should read **IDM Video Assistant 3.6.0** and show the ID
    `ljckgbgnolmopacdgmmgaijleadcmpgn`.
 6. Click the puzzle-piece icon and pin **IDM Video Assistant** to the toolbar.
 
@@ -88,7 +88,7 @@ All**), then select the extracted folder. Chrome cannot load a ZIP directly.
 2. Turn on **Developer mode** (left sidebar).
 3. Click **Load unpacked**.
 4. Select the same folder as above.
-5. Confirm the name, version `3.5.0` and ID `ljckgbgnolmopacdgmmgaijleadcmpgn`.
+5. Confirm the name, version `3.6.0` and ID `ljckgbgnolmopacdgmmgaijleadcmpgn`.
 6. Pin the extension from the Extensions menu.
 
 The **Allow extensions from other stores** switch is only needed for Chrome Web
@@ -117,14 +117,17 @@ The popup also shows the native host version and the active transfer count.
    as a page with `<a href="...clip.mp4">` or an HTML5 `<video>` element.
 2. Open the popup. The media card lists the detected link, format, size hint,
    quality and duration where the page exposes them.
-3. Press **Send to IDM**. A toast confirms the file name; the transfer appears in
-   IDM's queue, using IDM's configured save location.
+3. Press **Send to IDM**. IDM opens its **Download File Info** dialog with the
+   file name, category, folder and server information already filled in; choose
+   **Start Download** or **Download Later**. The transfer then appears in IDM's
+   queue, using the folder you confirmed.
 4. Press **Rescan** after the page changes.
 5. Right-click a direct link and try **Download with IDM** and **Download with
-   IDM to…**.
+   IDM to…**; both open the same dialog.
 6. Start an ordinary browser download with interception enabled. Confirm it is
-   paused, accepted by IDM, and removed from the browser list. Stop IDM and
-   repeat: the browser download must resume.
+   paused, shown in IDM's dialog, and removed from the browser list after
+   acceptance. Cancel the dialog (or stop IDM) and repeat: the browser download
+   must resume.
 
 ### YouTube verification
 

@@ -1,142 +1,129 @@
-# IDM 3.5.0 — Release Notes
+# IDM 3.6.0 — Release Notes
 
 **Release date:** 2026-11-01
 **Platform:** Windows 10/11 x64
 **Channel:** stable
 
-Version 3.5.0 is a complete modern redesign of the IDM desktop interface. The
-download engine, SQLite database, browser integration, native messaging host,
-security model and signed updater are unchanged; every screen above them has
-been rebuilt on one central design system so the application looks and behaves
-consistently at any window size, theme or Windows display scale.
+Version 3.6.0 makes every new download start from a real **Download File Info**
+dialog. Manual link entry, the browser extensions and the context menus all open
+the same review screen, where the file name, category, destination folder,
+optional description and start time are confirmed before any transfer is queued.
+The dialog reads the real server metadata, so the size, type, resume support and
+last-modified values shown are the ones the server reported — or an em dash when
+the server did not report them.
 
 Existing settings, history, queue entries, partial downloads, browser
-registration and update configuration are preserved. No database migration is
-required for this release.
+registration and update configuration are preserved. The database migrates from
+schema version 4 to 5 with a verified backup first; downloads added by older
+versions keep their rows and gain empty `description` and `start_later` values.
 
 ## Highlights
 
-### A single design system
+### Download File Info dialog
 
-Colours, typography, spacing, corner radii, elevation, icon sizes and motion
-timings now live in `idm/ui/design.py` and are compiled into the global Qt
-style sheet by `idm/ui/theme.py`. Components no longer invent their own
-spacing or colours, so light, dark and Follow-Windows themes stay consistent
-across every page.
+- URL field with full-link copy, so long or tokenised links can be reused
+  without truncation.
+- Category selector with General, Compressed, Documents, Music, Videos,
+  Programs, Images and Other, plus automatic detection from the filename
+  extension and, when needed, the server MIME type.
+- Editable **Save as** name and **Save to** folder with the native Windows
+  folder picker, the detected extension, and validation for unsafe names, path
+  traversal, missing folders and obvious free-space problems.
+- **Remember this folder for “Category”** stores a per-category default that is
+  also editable from Settings.
+- Optional description (up to 2,000 characters) saved with the download record.
+- File information panel: size, MIME type, source host, server status, last
+  modified and resume support, with unknown values kept honest.
+- Windows 11-style presentation: branded header, gradient file hero card with
+  category and extension chips, icon-led fields, a server information card and
+  a subtle animated primary action in light, dark and Follow-Windows themes.
+- Resizable and scrollable: opens at 800×920 where space allows, clamps to the
+  screen and keeps its footer reachable down to 640×560.
 
-- Original IDM branding and iconography only; no third-party artwork.
-- Light and dark palettes plus a **Follow Windows** mode that tracks the
-  Windows app theme while it is running.
-- Theme switching is immediate and repaints every page, table, card and
-  custom-painted control.
-- Subtle 120–260 ms transitions for the sidebar rail, segmented controls,
-  toggles and notices. Windows' "Animation effects" accessibility setting and
-  the IDM **Reduce motion** preference disable them together.
+### Server metadata detection
 
-### Navigation and toolbar
+- A `HEAD` request first. Redirects are followed, and the final URL, status,
+  `Content-Length`, `Content-Disposition`, `Content-Type`, `ETag`,
+  `Last-Modified` and `Accept-Ranges` are recorded.
+- If `HEAD` is rejected, a single `GET` with `Range: bytes=0-0` is used and
+  aborted as soon as the headers arrive. IDM never downloads a whole file to
+  inspect it.
+- Unknown size, missing `Content-Disposition`, servers without Range support,
+  timeouts and network failures are reported honestly. IDM does not claim
+  resume or multi-connection support that the server did not advertise.
+- Pending probes are aborted when the URL changes or the dialog closes.
 
-- Collapsible navigation rail with Dashboard, All Downloads, Downloading,
-  Completed, Queued, Paused, Video Downloads, Documents, Programs, Music,
-  Compressed Files, Browser Assistant, Scheduler, Download History and
-  Settings. Counts are live and the collapsed rail keeps icons and tooltips.
-- The toolbar exposes Add Download, Start, Pause, Resume, Stop, Remove, Queue,
-  Search, theme selection, Notifications and Settings. Actions enable only
-  when they apply to the current selection.
-- Keyboard access: `Ctrl+B` toggles the rail, lists are focusable, Enter
-  activates navigation items and video cards, and every icon-only button has
-  an accessible name.
+### Start, Later and Cancel
 
-### Dashboard
+- **Start Download** validates the URL and folder, refuses an active duplicate,
+  checks the destination, creates the database record and hands the task to the
+  engine. The dialog closes only after the task exists; failures stay visible
+  with a clear message.
+- **Download Later** stores the complete task in the queue without starting any
+  network transfer. It survives a restart and starts from the Queue Manager with
+  **Start now**.
+- **Cancel** creates no record and cancels pending metadata requests.
 
-The dashboard reads live data from the download manager and storage layer:
+### Browser integration
 
-- Active, queued, completed and failed totals.
-- Live aggregate throughput and the global speed limit.
-- Recent transfers with progress and state.
-- Queue depth, scheduler state, disk free space and last update check.
-- The view refreshes automatically while transfers are running and stops
-  polling when the page is not visible.
+- Chrome, Edge and Firefox downloads now open the Download File Info dialog
+  instead of being added silently. The detected browser, referrer, page and
+  MIME type are kept on the record.
+- The browser copy stays paused while the dialog is open. It is cancelled only
+  after IDM confirms the task; cancelling the dialog or any error resumes the
+  original browser download, so a file is never discarded.
+- Requests are handled one at a time, simultaneous downloads queue behind the
+  dialog, and a URL that is already active is answered without a second prompt.
+- The extension manifests are version 3.6.0. No new browser permission is
+  requested.
 
-### Download list
+### Database and engine
 
-- Virtualized table that stays responsive with thousands of rows.
-- File name, size, **category**, status, time left, transfer rate and last try.
-- Per-row progress painting, status colouring and category-aware icons.
-- Search across file name, URL, category and source domain; sortable columns;
-  multi-select; context menu for open, folder, copy link, pause, resume, stop,
-  queue and remove.
-- Explicit empty and no-results states instead of a blank grid.
+- Schema version 5 adds `description` and `start_later` to the download table.
+- Before migrating, IDM writes a verified backup under
+  `%APPDATA%\IDM Download Manager\backups\`; an integrity-check failure stops
+  the upgrade instead of changing data.
+- Held tasks are stored as queued with `start_later = 1`, do not consume an
+  active slot, and are excluded from automatic queue pumping until released.
 
-### Video Downloads
+### Security
 
-- Card grid with title, source, format, size, progress, speed, time left and
-  status, plus search and sorting.
-- Cards expose Pause/Resume, Open file, Open folder, Copy link and Remove
-  record only when the action is valid.
-- Direct HTTP/HTTPS media only. YouTube and other restricted platforms are
-  recognised but never scraped, decrypted or bypassed; the extension and the
-  desktop point users to the platform's official options.
-
-### Browser Assistant
-
-- Real Chrome, Edge and Firefox detection from the native-messaging registry
-  entries and the installed extension version.
-- Native host registration status, supported file types and connection state
-  come from the live bridge; the page never reports "connected" without a
-  validated connection.
-- Enable/disable detection, choose supported types and open installation
-  instructions. The installer still ships extensions as archives and unpacked
-  folders and never installs them silently.
-
-### Settings
-
-Fourteen searchable sections: General, Downloads, Connections, Browser
-Integration, Video Downloads, File Types, Scheduler, Notifications, Appearance,
-Storage, Backup and Restore, Automatic Updates, Security, and About IDM.
-
-- In-page search filters sections and rows immediately, with a clear
-  no-results state.
-- Every control persists through the existing settings store and applies
-  without restarting IDM.
-- Appearance includes theme, reduced motion and workspace visibility.
-- Browser Integration, Backup and Restore, Automatic Updates and About expose
-  real actions: registration, verified backup/restore, update checks and
-  diagnostic locations.
-
-### Update Center
-
-- Installed version, latest version, release date, package size and status at
-  a glance.
-- Embedded signed-manifest check with release notes, download progress,
-  SHA-256 verification, Authenticode status when a publisher is configured,
-  pre-install backup and rollback.
-- Background checks and About-window checks share the same result state, so
-  the page always matches the real updater.
-- Update history and maintenance tools remain available.
+- Only `http` and `https` links are accepted; `file:`, `javascript:`, `data:`
+  and other schemes are rejected.
+- File names are sanitised and the resolved path must stay inside the chosen
+  folder. Windows-reserved names and credentials in URLs are rejected.
+- Logs redact URL credentials, query strings and fragments; cookies and
+  authentication headers are never logged, and the extension never forwards
+  browser cookies or client certificates.
+- The extension remains limited to `nativeMessaging`, `downloads`,
+  `contextMenus`, `storage` and `activeTab`; there are no host permissions,
+  cookie access or content injection.
+- Downloaded files are never executed or opened automatically.
 
 ## Preserved and unchanged
 
-- Segmented HTTP Range download engine, retry, resume, speed limits and queue.
-- SQLite schema version 4, verified pre-migration backups and all user data.
-- Browser extensions, native messaging protocol v2, allowlists, size limits
-  and command restrictions.
-- Ed25519 manifest signatures, SHA-256 installer checks, Authenticode support,
-  staged installation and rollback.
-- No DRM bypass, no protected stream extraction, no signature deciphering and
-  no unauthorised scraping.
+- Segmented HTTP Range engine, up to 16 connections, resume, retry, speed
+  limits and the persistent queue.
+- All 3.5.0 workspace pages: navigation rail, dashboard, virtualized download
+  table, video cards, Browser Assistant, Settings and Update Center.
+- SQLite history, verified backups, extension settings and saved downloads.
+- Ed25519 manifest signatures, SHA-256 and Authenticode verification for
+  updates.
+- No DRM bypass, no protected stream extraction and no signature deciphering.
 
 ## Upgrade notes
 
-- Install `IDM-Setup-3.5.0.exe` over 3.0.0 or any earlier 1.x/2.x release. The
-  same AppId, installation directory and `%APPDATA%\IDM Download Manager`
-  user-data folder are reused.
-- No database migration runs for 3.5.0; schema version 4 remains current.
-- The pinned Chrome/Edge extension ID is unchanged, so existing native-host
-  registration continues to work. Reload the unpacked extension if the
-  browser reports an older manifest version.
-- The signed public update feed still advertises 3.0.0 until a new manifest is
-  signed with the release key. IDM will correctly treat the installed 3.5.0 as
-  newer; the Update Center shows that state instead of offering a downgrade.
+- Install `IDM-Setup-3.6.0.exe` over 3.5.0 or any earlier release. The same
+  AppId, installation directory and `%APPDATA%\IDM Download Manager` user-data
+  folder are reused.
+- The first 3.6.0 start migrates schema version 4 to 5 after writing a backup.
+  Existing downloads, settings, queue order and partial files are preserved.
+- The pinned Chrome/Edge extension ID is unchanged, so the existing native-host
+  registration keeps working. Reload the unpacked extension so the browser
+  reports version 3.6.0.
+- The signed public update feed advertises 3.6.0 after the release manifest is
+  signed and published. Until then the Update Center reports that the installed
+  build is already current.
 
 ## Verification
 
@@ -155,8 +142,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\build_windows.ps1 -Force -
 Release artifacts:
 
 - `dist\IDM\IDM.exe` — portable application
-- `dist-installer\IDM-Setup-3.5.0.exe` — installer
-- `release\IDM-3.5.0-win64.zip` — bundle with installer, portable build,
+- `dist-installer\IDM-Setup-3.6.0.exe` — installer
+- `release\IDM-3.6.0-win64.zip` — bundle with installer, portable build,
   extensions, documentation and SHA-256 sums
 
 See `UI-Design-System.md` for the design tokens and component rules and

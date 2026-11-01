@@ -111,8 +111,8 @@ trust anchors are declared. No update URL is hardcoded in another module.
 | `UPDATE_MANIFEST_URL` | Derived public HTTPS URL. Empty while `GITHUB_OWNER` is empty, which produces the “not configured” state instead of contacting a fake server. |
 | `ALLOWED_MANIFEST_HOSTS` | `raw.githubusercontent.com`, `github.com`, `api.github.com`. |
 | `ALLOWED_DOWNLOAD_HOSTS` | `github.com` plus the GitHub asset CDN hosts `objects.githubusercontent.com` and `release-assets.githubusercontent.com`. |
-| `EXPECTED_PUBLISHER` | **Empty in 3.5.0.** No CA-issued Authenticode certificate exists yet, so installation trusts the Ed25519-signed manifest and SHA-256 only. Set the exact signer name when a certificate is available to require Authenticode as well. |
-| `MANIFEST_PUBLIC_KEY` | Base64 Ed25519 public key embedded in 3.5.0; every manifest must be signed with the matching private key, which is kept outside this repository. |
+| `EXPECTED_PUBLISHER` | **Empty in 3.6.0.** No CA-issued Authenticode certificate exists yet, so installation trusts the Ed25519-signed manifest and SHA-256 only. Set the exact signer name when a certificate is available to require Authenticode as well. |
+| `MANIFEST_PUBLIC_KEY` | Base64 Ed25519 public key embedded in 3.6.0; every manifest must be signed with the matching private key, which is kept outside this repository. |
 | `UPDATE_CHANNEL` | Default channel: `stable` or `beta`. |
 | `UPDATE_CONNECT_TIMEOUT`, `UPDATE_READ_TIMEOUT` | 10 s connect, 30 s read. |
 | `UPDATE_MAX_MANIFEST_BYTES`, `UPDATE_MAX_INSTALLER_BYTES` | 512 KiB and 512 MiB. |
@@ -160,7 +160,7 @@ trust the standard GitHub release-asset CDN hosts. Every other download host mus
 be listed in `ALLOWED_DOWNLOAD_HOSTS` or `IDM_UPDATE_TRUSTED_HOSTS`.
 
 A publisher is not required for automatic installation. IDM needs at least one
-trust anchor: the Ed25519 manifest public key (present in the 3.5.0 build) or an
+trust anchor: the Ed25519 manifest public key (present in the 3.6.0 build) or an
 Authenticode publisher. With only the manifest key, the installer is accepted
 when its SHA-256 matches the signed manifest. With a publisher configured, a
 valid Authenticode signature from that exact signer is also required.
@@ -168,7 +168,7 @@ valid Authenticode signature from that exact signer is also required.
 ### Unsigned installers: SHA-256 trust
 
 When the endpoint and manifest key are configured but `EXPECTED_PUBLISHER` is
-empty (the 3.5.0 state), IDM:
+empty (the 3.6.0 state), IDM:
 
 - verifies the signed manifest and reports the available version normally;
 - downloads the installer, checks it against the manifest’s SHA-256 digest and
@@ -207,14 +207,15 @@ The client accepts exactly these fields; anything else is an error.
 {
   "app_name": "IDM",
   "channel": "stable",
-  "latest_version": "3.5.0",
+  "latest_version": "3.6.0",
   "minimum_supported_version": "1.0.0",
   "release_date": "2026-11-01",
   "release_notes": [
-    "Update endpoint and signed manifest configured",
-    "Manual download when no code-signing certificate is available"
+    "Download File Info dialog with categories, folder memory and Download Later",
+    "Server metadata detection over HEAD with a Range GET fallback",
+    "Browser downloads open the dialog and resume when it is cancelled"
   ],
-  "download_url": "https://github.com/servicingcentrecomputer-maker/IDM/releases/download/v3.5.0/IDM-Setup-3.5.0.exe",
+  "download_url": "https://github.com/servicingcentrecomputer-maker/IDM/releases/download/v3.6.0/IDM-Setup-3.6.0.exe",
   "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
   "package_size": 73400320,
   "mandatory": false,
@@ -267,7 +268,7 @@ compromised. SHA-256 alone is not trusted when a key is configured.
      --private-key C:\Users\<you>\.idm-signing\manifest-private.pem
    ```
 
-   The private key used for 3.5.0 is kept outside the repository at
+   The private key used for 3.6.0 is kept outside the repository at
    `C:\Users\<you>\.idm-signing\manifest-private.pem`; back it up securely and
    never commit it. `scripts/build_release.ps1` can sign and publish a manifest
    in a separate update-server checkout when `MANIFEST_PUBLIC_KEY` is set and
@@ -692,7 +693,7 @@ the SHA-256 digest in the signed manifest.
 | “Updates are not configured.” | The build has no manifest URL. Set `GITHUB_OWNER` in `config.py`, the manifest URL in Options → Updates, or `IDM_UPDATE_MANIFEST_URL`. |
 | “Automatic installation needs a trusted update signature.” | Configure a manifest public key or an Authenticode publisher. |
 | **Download Installer** opens the browser | Expected only when neither a manifest public key nor a publisher is configured. IDM never runs an installer without a trust anchor. |
-| The installer is not Authenticode-signed | Expected in the unsigned 3.5.0 build. IDM verified it against the signed manifest and SHA-256; configure a publisher after obtaining a CA-issued certificate. |
+| The installer is not Authenticode-signed | Expected in the unsigned 3.6.0 build. IDM verified it against the signed manifest and SHA-256; configure a publisher after obtaining a CA-issued certificate. |
 | “The Updater component is missing.” | You are running from source or a broken install. Use the packaged build/reinstall. |
 | “The update server returned HTTP 404 …” | The manifest URL is wrong or the release was not published. |
 | “The download host … is not trusted.” | Put the installer on a GitHub release or add the CDN host with `IDM_UPDATE_TRUSTED_HOSTS`. |
@@ -720,7 +721,7 @@ the SHA-256 digest in the signed manifest.
 - An Authenticode-signed release requires a code-signing certificate and a
   manually controlled signing step; the build script does not hold signing
   secrets.
-- The 3.5.0 build is unsigned. Automatic installation trusts the Ed25519-signed
+- The 3.6.0 build is unsigned. Automatic installation trusts the Ed25519-signed
   manifest and SHA-256; Authenticode is added when a CA-issued certificate and
   publisher are configured.
 - Authenticode verification and installation are Windows-specific. Other

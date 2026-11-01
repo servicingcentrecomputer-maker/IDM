@@ -37,7 +37,9 @@ logger = logging.getLogger(__name__)
 
 BRIDGE_CONNECT_TIMEOUT = 5.0
 STATUS_TIMEOUT = 8.0
-DOWNLOAD_TIMEOUT = 120.0
+# The desktop may show the Download File Info dialog before answering.  Keep
+# the native host waiting long enough for a person to review and edit the task.
+DOWNLOAD_TIMEOUT = 900.0
 
 
 class BridgeUnavailable(RuntimeError):

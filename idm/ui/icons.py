@@ -9,6 +9,8 @@ from PySide6.QtSvg import QSvgRenderer
 from ..constants import (
     CATEGORY_COMPRESSED,
     CATEGORY_DOCUMENTS,
+    CATEGORY_GENERAL,
+    CATEGORY_IMAGES,
     CATEGORY_MUSIC,
     CATEGORY_OTHER,
     CATEGORY_PROGRAMS,
@@ -95,6 +97,11 @@ _SVG_BODIES: dict[str, str] = {
     "archive": (
         '<path d="M4 7.5h16V20H4z"/><path d="M3 4h18v3.5H3z"/>'
         '<path d="M10 11.5h4V14h-4z"/>'
+    ),
+    "image": (
+        '<rect x="4" y="5" width="16" height="14" rx="2"/>'
+        '<circle cx="9" cy="9.5" r="1.4"/>'
+        '<path d="m5 17 4.5-4.5L13 16l2.5-2.5L19 17"/>'
     ),
     "sun": (
         '<circle cx="12" cy="12" r="4.2"/>'
@@ -199,20 +206,24 @@ _SVG_BODIES: dict[str, str] = {
 }
 
 CATEGORY_ICON_NAMES = {
+    CATEGORY_GENERAL: "download",
     CATEGORY_DOCUMENTS: "file_text",
     CATEGORY_MUSIC: "music",
     CATEGORY_VIDEOS: "video",
     CATEGORY_PROGRAMS: "app",
     CATEGORY_COMPRESSED: "archive",
+    CATEGORY_IMAGES: "image",
     CATEGORY_OTHER: "file",
 }
 
 CATEGORY_COLORS = {
+    CATEGORY_GENERAL: "#4E8FD8",
     CATEGORY_DOCUMENTS: "#5B9CFF",
     CATEGORY_MUSIC: "#E879B9",
     CATEGORY_VIDEOS: "#A78BFA",
     CATEGORY_PROGRAMS: "#3ECF9A",
     CATEGORY_COMPRESSED: "#F2B84B",
+    CATEGORY_IMAGES: "#57B6C9",
     CATEGORY_OTHER: "#8D9BB0",
 }
 

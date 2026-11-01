@@ -36,6 +36,7 @@ from ...core.paths import (
 from ...core.settings import AppSettings
 from .. import design, icons
 from ..components import Card, PageScroll
+from ..dialogs.categories import CategoryManagerDialog
 from ..theme import THEME_LABELS, THEME_ORDER, ThemeManager
 from .common import NoticeBanner
 
@@ -44,11 +45,14 @@ _DIRECT_MEDIA_TYPES = (
     "MP3", "M4A", "AAC", "OGG", "WAV", "FLAC",
 )
 _CATEGORY_TYPES = {
+    "General": "Files without a more specific category",
     "Documents": "PDF, DOCX, XLSX, PPTX, TXT, EPUB",
     "Programs": "EXE, MSI, ZIP installers, APK",
     "Music": "MP3, FLAC, WAV, M4A, OGG",
     "Compressed": "ZIP, RAR, 7Z, TAR, GZ",
     "Videos": "MP4, MKV, WebM, MOV, AVI",
+    "Images": "PNG, JPG, GIF, WEBP, SVG",
+    "Other": "Anything not detected automatically",
 }
 
 
@@ -395,11 +399,22 @@ class AdvancedSettingsPage(QWidget):
         summary.setObjectName("HintLabel")
         summary.setWordWrap(True)
         section.body.addWidget(summary)
+        self._categories_summary = QLabel()
+        section.add_value(
+            "Custom categories",
+            self._categories_summary,
+            "Categories and remembered save folders used by Download File Info.",
+        )
         self._rules_summary = QLabel()
         section.add_value("Location rules", self._rules_summary)
         section.add_buttons(
             "Save locations",
             [
+                self._button(
+                    "Manage categories & folders…",
+                    self._manage_categories,
+                    "file_text",
+                ),
                 self._button(
                     "Manage file type rules…",
                     lambda: self.options_tab_requested.emit(2),
@@ -678,6 +693,37 @@ class AdvancedSettingsPage(QWidget):
         self._update_url.setText(s.update_manifest_url)
         self._update_publisher.setText(s.update_publisher)
         self._rules_summary.setText(self._rules_text())
+        self._categories_summary.setText(self._categories_text())
+
+    def _categories_text(self) -> str:
+        custom = list(getattr(self._settings, "custom_categories", []))
+        paths = dict(getattr(self._settings, "category_paths", {}))
+        lines = []
+        if custom:
+            for entry in custom:
+                extensions = ", ".join(
+                    f".{value}" for value in entry.get("extensions", [])
+                )
+                lines.append(f"{entry.get('name')}: {extensions}")
+        else:
+            lines.append("No custom categories.")
+        if paths:
+            remembered = "; ".join(
+                f"{name} → {folder}" for name, folder in sorted(paths.items())
+            )
+            lines.append(f"Remembered folders: {remembered}")
+        else:
+            lines.append("No remembered category folders.")
+        return "\n".join(lines)
+
+    def _manage_categories(self) -> None:
+        dialog = CategoryManagerDialog(self._settings, self._theme, self)
+        try:
+            dialog.exec()
+        finally:
+            dialog.deleteLater()
+        self._categories_summary.setText(self._categories_text())
+        self.settings_applied.emit()
 
     def _rules_text(self) -> str:
         config = self._settings.location_config.normalized()

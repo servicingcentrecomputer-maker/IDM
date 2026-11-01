@@ -21,6 +21,7 @@ from downloads.location_manager import (
 )
 
 from ..constants import MAX_SPEED_LIMIT_KBPS
+from .categories import normalize_category_paths, normalize_custom_categories
 from .database import Database
 from .paths import default_download_dir, settings_file
 
@@ -61,6 +62,8 @@ _DEFAULTS: dict[str, Any] = {
     "update_remind_version": "",
     "download_mode": MODE_DEFAULT,
     "download_type_rules": [],
+    "custom_categories": [],
+    "category_paths": {},
 }
 
 _THEMES = {"classic", "light", "dark", "system"}
@@ -117,6 +120,8 @@ class AppSettings:
         self.update_remind_after: str = _DEFAULTS["update_remind_after"]
         self.update_remind_version: str = _DEFAULTS["update_remind_version"]
         self.location_config = DownloadLocationConfig()
+        self.custom_categories: list[dict[str, Any]] = []
+        self.category_paths: dict[str, str] = {}
         self.load()
 
     # ------------------------------------------------------------------ access
@@ -265,6 +270,12 @@ class AppSettings:
             values.get("update_remind_version", _DEFAULTS["update_remind_version"])
         )
         self.location_config = DownloadLocationConfig.from_settings(values)
+        self.custom_categories = normalize_custom_categories(
+            values.get("custom_categories")
+        )
+        self.category_paths = normalize_category_paths(
+            values.get("category_paths"), self.custom_categories
+        )
 
     # ------------------------------------------------------------------ saving
     def save(self) -> None:
@@ -365,6 +376,17 @@ class AppSettings:
                     ),
                 }
             )
+        if "custom_categories" in values:
+            self.custom_categories = normalize_custom_categories(
+                values["custom_categories"]
+            )
+            self.category_paths = normalize_category_paths(
+                self.category_paths, self.custom_categories
+            )
+        if "category_paths" in values:
+            self.category_paths = normalize_category_paths(
+                values["category_paths"], self.custom_categories
+            )
 
     def _as_dict(self) -> dict[str, Any]:
         return {
@@ -398,6 +420,8 @@ class AppSettings:
             "update_last_success_version": self.update_last_success_version,
             "update_remind_after": self.update_remind_after,
             "update_remind_version": self.update_remind_version,
+            "custom_categories": [dict(entry) for entry in self.custom_categories],
+            "category_paths": dict(self.category_paths),
             **self.location_config.to_settings(),
         }
 
@@ -406,6 +430,31 @@ class AppSettings:
         return dict(self._as_dict())
 
     # ------------------------------------------------------------------ updates
+    def remembered_folder(self, category: str) -> str:
+        """Folder remembered for a category, or an empty string."""
+        return self.category_paths.get(str(category or "").strip(), "")
+
+    def remember_category_folder(self, category: str, folder: str) -> None:
+        name = str(category or "").strip()
+        path = str(folder or "").strip()
+        if not name or not path:
+            return
+        paths = dict(self.category_paths)
+        paths[name] = path
+        self.category_paths = normalize_category_paths(
+            paths, self.custom_categories
+        )
+        self.save()
+
+    def forget_category_folder(self, category: str) -> None:
+        name = str(category or "").strip()
+        if not name or name not in self.category_paths:
+            return
+        paths = dict(self.category_paths)
+        paths.pop(name, None)
+        self.category_paths = paths
+        self.save()
+
     def note_update_check(self) -> None:
         self.update_last_check = _utc_now()
         self.save()

@@ -18,11 +18,11 @@ from ..core.media import (
     normalize_sha256,
     source_domain,
 )
+from ..core.categories import detect_category, safe_category
 from ..core.network_monitor import NetworkMonitor
 from ..core.paths import ensure_download_dir
 from ..core.settings import AppSettings
 from ..core.url_utils import (
-    category_for_filename,
     sanitize_filename,
     unique_filename,
     validate_url,
@@ -170,7 +170,10 @@ class DownloadManager(QObject):
             item = _item_from_record(record)
             if item is None:
                 continue
-            if item.status in ACTIVE_STATUSES or item.status in {
+            if item.queued_later and item.status == DownloadStatus.QUEUED:
+                item.speed = 0.0
+                item.eta = None
+            elif item.status in ACTIVE_STATUSES or item.status in {
                 DownloadStatus.QUEUED,
                 DownloadStatus.PAUSING,
                 DownloadStatus.STOPPING,
@@ -273,6 +276,8 @@ class DownloadManager(QObject):
             "expected_sha256": item.expected_sha256,
             "checksum_status": item.checksum_status,
             "integrity_verified_at": item.integrity_verified_at,
+            "description": item.description,
+            "start_later": int(bool(item.queued_later)),
         }
 
     def _save_item(self, item: DownloadItem) -> None:
@@ -357,7 +362,7 @@ class DownloadManager(QObject):
         entries = [
             {
                 "download_id": item.id,
-                "state": "waiting",
+                "state": "held" if item.queued_later else "waiting",
                 "priority": int(item.priority),
             }
             for item in self.queue_items()
@@ -388,6 +393,8 @@ class DownloadManager(QObject):
         expected_sha256: str = "",
         content_type: str = "",
         media_kind_hint: str = "",
+        description: str = "",
+        download_later: bool = False,
     ) -> DownloadItem:
         normalized_url = validate_url(url)
         try:
@@ -410,7 +417,12 @@ class DownloadManager(QObject):
             and str(Path(item.folder).resolve()).casefold() == folder_key
         }
         unique_name = unique_filename(folder_path, safe_name, reserved=reserved)
-        category = category or category_for_filename(unique_name)
+        custom_categories = getattr(self._settings, "custom_categories", [])
+        category = safe_category(
+            category
+            or detect_category(unique_name, content_type, custom_categories),
+            custom_categories,
+        )
         metadata = media_metadata(
             url=normalized_url,
             filename=unique_name,
@@ -423,14 +435,22 @@ class DownloadManager(QObject):
             media_kind_hint=media_kind_hint,
         )
 
+        held = bool(download_later)
+        if download_later or start_immediately:
+            item_status = DownloadStatus.QUEUED
+            queue_seq = self._next_queue_seq(priority)
+        else:
+            item_status = DownloadStatus.PAUSED
+            queue_seq = 0.0
+
         item = DownloadItem(
             url=normalized_url,
             filename=unique_name,
             folder=str(folder_path),
             category=category,
             priority=priority,
-            status=DownloadStatus.QUEUED if start_immediately else DownloadStatus.PAUSED,
-            queue_seq=self._next_queue_seq(priority) if start_immediately else 0.0,
+            status=item_status,
+            queue_seq=queue_seq,
             connections=connection_count,
             speed_limit_kbps=limit,
             source_browser=str(source_browser or "")[:32],
@@ -443,6 +463,8 @@ class DownloadManager(QObject):
             file_format=metadata["file_format"],
             expected_sha256=normalize_sha256(expected_sha256),
             checksum_status="pending" if normalize_sha256(expected_sha256) else "not-requested",
+            description=str(description or "").strip()[:2000],
+            queued_later=held,
         )
         self._items[item.id] = item
         self._order.append(item.id)
@@ -453,7 +475,7 @@ class DownloadManager(QObject):
         self.download_added.emit(item)
         self.queue_changed.emit()
         self._emit_stats(force=True)
-        if start_immediately:
+        if start_immediately and not held:
             self._pump()
         return item
 
@@ -480,7 +502,7 @@ class DownloadManager(QObject):
         if self._shutting_down:
             return
         while len(self._workers) < self.max_concurrent:
-            queued = self.queue_items()
+            queued = [item for item in self.queue_items() if not item.queued_later]
             if not queued:
                 break
             item = queued[0]
@@ -599,10 +621,34 @@ class DownloadManager(QObject):
             item.error = ""
             item.speed = 0.0
             item.eta = None
+            item.queued_later = False
             item.queue_seq = self._front_sequence()
             self._network_waiting.discard(download_id)
             self._save_item(item)
             self._event(item.id, "resumed", 0)
+            self.download_updated.emit(item)
+            changed += 1
+        if changed:
+            self.queue_changed.emit()
+            self._pump()
+            self._emit_stats(force=True)
+        return changed
+
+    def start_queued(self, download_ids: list[str]) -> int:
+        """Release “Download Later” entries into the active queue."""
+        changed = 0
+        for download_id in download_ids:
+            item = self._items.get(download_id)
+            if (
+                item is None
+                or item.status != DownloadStatus.QUEUED
+                or not item.queued_later
+            ):
+                continue
+            item.queued_later = False
+            item.queue_seq = self._front_sequence()
+            self._save_item(item)
+            self._event(item.id, "queued", 0)
             self.download_updated.emit(item)
             changed += 1
         if changed:
@@ -1093,6 +1139,8 @@ def _item_from_record(record: dict) -> DownloadItem | None:
         expected_sha256=str(record.get("expected_sha256") or ""),
         checksum_status=str(record.get("checksum_status") or "not-requested"),
         integrity_verified_at=str(record.get("integrity_verified_at") or ""),
+        description=str(record.get("description") or ""),
+        queued_later=bool(record.get("start_later")),
         created_at=_parse_datetime(record.get("created_at")) or datetime.now(),
         completed_at=_parse_datetime(record.get("completed_at")),
         last_try=_parse_datetime(record.get("last_try")),

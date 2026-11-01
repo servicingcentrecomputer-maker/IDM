@@ -58,6 +58,7 @@ from .common import (
     primary_button,
     secondary_button,
 )
+from .categories import CategoryManagerDialog
 from .location_rule import LocationRuleDialog
 
 def _format_update_time(value: str) -> str:
@@ -463,11 +464,33 @@ class OptionsDialog(BaseDialog):
         )
         browser_hint.setWordWrap(True)
         layout.addWidget(browser_hint)
+
+        category_row = QHBoxLayout()
+        category_row.setSpacing(8)
+        category_row.addWidget(
+            make_label(
+                "Categories remember a folder for each file type. They are "
+                "offered in the Download File Info dialog.",
+                "HintLabel",
+            ),
+            1,
+        )
+        self._categories_button = secondary_button("Categories & folders…")
+        self._categories_button.clicked.connect(self._manage_categories)
+        category_row.addWidget(self._categories_button)
+        layout.addLayout(category_row)
         layout.addStretch(1)
 
         self._refresh_rules()
         self._update_mode_state()
         return page
+
+    def _manage_categories(self) -> None:
+        dialog = CategoryManagerDialog(self._settings, self._theme, self)
+        try:
+            dialog.exec()
+        finally:
+            dialog.deleteLater()
 
     # ------------------------------------------------------------------ location rules
     def _current_mode(self) -> str:

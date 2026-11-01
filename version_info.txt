@@ -1,7 +1,7 @@
 VSVersionInfo(
   ffi=FixedFileInfo(
-    filevers=(3, 5, 0, 0),
-    prodvers=(3, 5, 0, 0),
+    filevers=(3, 6, 0, 0),
+    prodvers=(3, 6, 0, 0),
     mask=0x3f,
     flags=0x0,
     OS=0x40004,
@@ -16,12 +16,12 @@ VSVersionInfo(
           '040904B0',
           [StringStruct('CompanyName', 'IDM'),
            StringStruct('FileDescription', 'IDM Internet Download Manager'),
-           StringStruct('FileVersion', '3.5.0.0'),
+           StringStruct('FileVersion', '3.6.0.0'),
            StringStruct('InternalName', 'IDM'),
            StringStruct('LegalCopyright', 'Copyright (C) 2026 IDM'),
            StringStruct('OriginalFilename', 'IDM.exe'),
            StringStruct('ProductName', 'IDM'),
-           StringStruct('ProductVersion', '3.5.0.0')])
+           StringStruct('ProductVersion', '3.6.0.0')])
       ]),
     VarFileInfo([VarStruct('Translation', [1033, 1200])])
   ]

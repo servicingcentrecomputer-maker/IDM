@@ -43,6 +43,7 @@ _WORKSPACE_ITEMS = (
 _LIBRARY_ITEMS = (
     ("video_downloads", "Video Downloads", "video"),
     ("documents", "Documents", "file_text"),
+    ("images", "Images", "image"),
     ("programs", "Programs", "app"),
     ("music", "Music", "music"),
     ("compressed", "Compressed Files", "archive"),

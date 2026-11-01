@@ -1313,6 +1313,155 @@ QLabel#ConnectionName {
     font-size: 11px;
     font-weight: 600;
 }
+QFrame#FileInfoCard {
+    background-color: $surface_alt;
+    border: 1px solid $border_soft;
+    border-radius: $panel_radius;
+}
+QLabel#FileInfoKey {
+    color: $text_faint;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.6px;
+}
+QLabel#FileInfoValue {
+    color: $text;
+    font-size: 12px;
+}
+QLabel#FileNamePreview {
+    color: $text;
+    font-size: 15px;
+    font-weight: 600;
+}
+QLabel#FileTypeIcon {
+    background-color: $card;
+    border: 1px solid $border_soft;
+    border-radius: $control_radius;
+}
+QCheckBox#RememberPath {
+    color: $text_muted;
+    font-size: 12px;
+    background-color: $surface_alt;
+    border: 1px solid $border_soft;
+    border-radius: $control_radius;
+    padding: 9px 12px;
+}
+QCheckBox#RememberPath:hover {
+    background-color: $card_hover;
+    border-color: $focus_ring;
+    color: $text;
+}
+QCheckBox#RememberPath:checked {
+    background-color: $accent_soft;
+    border-color: $focus_ring;
+    color: $accent;
+    font-weight: 600;
+}
+
+/* ------------------------------------------- download file info dialog (3.6) */
+QLabel#DialogBrand {
+    background: $accent_gradient;
+    border-radius: 13px;
+}
+QLabel#DialogEyebrow {
+    color: $accent;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 1.4px;
+}
+QLabel#DialogMetaBadge {
+    color: $text_faint;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.6px;
+    padding: 4px 9px;
+    border: 1px solid $border_soft;
+    border-radius: $pill_radius;
+}
+QFrame#FileHeroCard {
+    background: qlineargradient(
+        x1:0, y1:0, x2:1, y2:1,
+        stop:0 $surface_alt, stop:1 $surface
+    );
+    border: 1px solid $border;
+    border-radius: $panel_radius;
+}
+QFrame#FileHeroCard:hover {
+    border-color: $focus_ring;
+}
+QLabel#CategoryPill {
+    background-color: $accent_soft;
+    border: 1px solid $focus_ring;
+    border-radius: $pill_radius;
+    color: $accent;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 3px 10px;
+}
+QLabel#MetaChip {
+    background-color: $chip_bg;
+    border: 1px solid transparent;
+    border-radius: $pill_radius;
+    color: $chip_text;
+    font-size: 11px;
+    padding: 3px 10px;
+}
+QFrame#OptionsCard, QFrame#InfoCard {
+    background-color: $surface;
+    border: 1px solid $border_soft;
+    border-radius: $panel_radius;
+}
+QLabel#CardTitle {
+    color: $text;
+    font-size: 13px;
+    font-weight: 600;
+}
+QLineEdit#UrlInput {
+    font-size: 13px;
+    padding: 8px 12px;
+    min-height: 24px;
+}
+QLineEdit#SaveAsInput, QLineEdit#FolderInput {
+    padding: 8px 12px;
+    min-height: 24px;
+}
+QComboBox#CategoryCombo {
+    padding: 8px 12px;
+    padding-right: 30px;
+    min-height: 24px;
+}
+QPlainTextEdit#DescriptionEdit {
+    background-color: $surface_alt;
+    border: 1px solid $border_soft;
+    border-radius: $input_radius;
+    color: $text;
+    padding: 8px 10px;
+    selection-background-color: $selection;
+    selection-color: $text;
+}
+QPlainTextEdit#DescriptionEdit:hover {
+    border-color: $border;
+}
+QPlainTextEdit#DescriptionEdit:focus {
+    border-color: $accent;
+    background-color: $surface;
+}
+QFrame#DialogFooter {
+    background-color: $surface_alt;
+    border-top: 1px solid $border_soft;
+}
+QLabel#FooterHint {
+    color: $text_faint;
+    font-size: 11px;
+}
+QPushButton#PrimaryButton[prominent="true"] {
+    padding: 9px 26px;
+    font-size: 13px;
+    min-height: 24px;
+}
+QPushButton#PrimaryButton[prominent="true"]:hover {
+    border-color: $accent_hover;
+}
 
 /* --------------------------------------------------------------------- tabs */
 $tabs_qss
