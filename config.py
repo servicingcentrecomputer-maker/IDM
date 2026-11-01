@@ -3,14 +3,15 @@
 This is the only place where the update endpoint and trust anchors are
 declared.  Do not hardcode update URLs anywhere else.
 
-Before publishing a production build, fill in ``GITHUB_OWNER`` and
-``EXPECTED_PUBLISHER``.  ``UPDATE_MANIFEST_URL`` is derived from the GitHub
-owner, repository, branch and manifest path, so renaming the repository does
-not require editing any Python module.
+The endpoint and manifest signing key are configured for the public IDM
+repository.  ``EXPECTED_PUBLISHER`` intentionally remains empty until a
+CA-issued Authenticode code-signing certificate is available: update checks
+and the signed manifest work, but automatic installation stays disabled and
+the UI offers a manual download instead.
 
-Values marked ``REQUIRED`` intentionally have no default.  While they are
-empty, IDM reports that updates are not configured instead of silently
-contacting an unverified or non-existent endpoint.
+``UPDATE_MANIFEST_URL`` is derived from the GitHub owner, repository, branch
+and manifest path, so renaming the repository does not require editing any
+Python module.
 
 Environment overrides are handled in :mod:`idm.updater.config`:
 ``IDM_UPDATE_MANIFEST_URL``, ``IDM_UPDATE_PUBLISHER``,
@@ -46,13 +47,12 @@ __all__ = [
 # GitHub update server
 # ---------------------------------------------------------------------------
 
-# REQUIRED: your GitHub user name or organization that owns IDM-Update-Server.
-# Example: "octocat".  Leave empty in a source checkout; set it for a release.
-GITHUB_OWNER = ""
+# Public GitHub account that owns the repository holding the signed manifest.
+GITHUB_OWNER = "servicingcentrecomputer-maker"
 
-GITHUB_REPO = "IDM-Update-Server"
+GITHUB_REPO = "IDM"
 GITHUB_MANIFEST_BRANCH = "main"
-GITHUB_MANIFEST_PATH = "latest.json"
+GITHUB_MANIFEST_PATH = "update/latest.json"
 
 # Public, unauthenticated HTTPS endpoint.  No token or credential is ever sent
 # by the desktop application.
@@ -82,16 +82,17 @@ ALLOWED_DOWNLOAD_HOSTS = [
 # Release trust
 # ---------------------------------------------------------------------------
 
-# REQUIRED for installation: the exact Authenticode signer name reported by
-# Windows for IDM_Setup.exe.  This is not optional; IDM refuses to run an
-# installer without a valid signature from this publisher.
+# REQUIRED for automatic installation: the exact Authenticode signer name
+# reported by Windows for IDM_Setup.exe.  Empty until a CA-issued code-signing
+# certificate is available; IDM then refuses to run an installer automatically
+# and offers a manual download instead.
 EXPECTED_PUBLISHER = ""
 
-# Optional.  Base64 (standard alphabet) of the raw 32-byte Ed25519 public key
-# used to sign latest.json.  When set, every manifest must carry a valid
-# ``manifest_signature`` or the check fails.  Generate a key pair with
-# ``scripts/sign_manifest.py keygen`` and keep the private key offline.
-MANIFEST_PUBLIC_KEY = ""
+# Base64 (standard alphabet) of the raw 32-byte Ed25519 public key used to sign
+# latest.json.  Every manifest must carry a valid ``manifest_signature`` or the
+# check fails.  The matching private key is kept offline outside this
+# repository; generate a pair with ``scripts/sign_manifest.py keygen``.
+MANIFEST_PUBLIC_KEY = "lGmE1PewtZOs/W27AX9jgd9NzBGj5FjJxKUNaKCtyu0="
 
 # "stable" accepts only stable manifests.  "beta" accepts beta and stable
 # manifests.  The channel can also be chosen in Options -> Updates.

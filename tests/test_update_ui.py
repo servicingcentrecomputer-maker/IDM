@@ -65,7 +65,8 @@ def _result(
     )
 
 
-def test_unconfigured_updates_explain_how_to_configure(panel):
+def test_unconfigured_updates_explain_how_to_configure(panel, monkeypatch):
+    monkeypatch.setattr("config.UPDATE_MANIFEST_URL", "")
     assert panel._status.text() == "Not checked yet."
     panel.check_for_updates()
     assert panel._status.text() == "Updates are not configured."
@@ -123,6 +124,45 @@ def test_check_failure_allows_retry(panel):
     assert panel._latest_value.text() == "—"
 
 
+def test_unsigned_build_offers_manual_download(panel, monkeypatch):
+    opened: list[str] = []
+
+    class FakeDesktop:
+        @staticmethod
+        def openUrl(url):
+            opened.append(url.toString())
+            return True
+
+    monkeypatch.setattr("idm.ui.dialogs.update.QDesktopServices", FakeDesktop)
+    panel._config = UpdateConfig(
+        manifest_url=MANIFEST_URL, expected_publisher="", trusted_hosts=(TRUSTED_HOST,)
+    )
+    panel._manual_download = True
+    panel._on_check_succeeded(_result())
+    assert panel._update_button.text() == "Download Installer"
+    assert "Automatic installation is disabled" in panel._status.text()
+    assert "GitHub" in panel._detail.text()
+    panel._update_action()
+    assert opened == [_result().manifest.download_url]
+
+
+def test_unsigned_build_start_install_opens_browser(panel, monkeypatch):
+    opened: list[str] = []
+
+    class FakeDesktop:
+        @staticmethod
+        def openUrl(url):
+            opened.append(url.toString())
+            return True
+
+    monkeypatch.setattr("idm.ui.dialogs.update.QDesktopServices", FakeDesktop)
+    panel._manual_download = True
+    panel._on_check_succeeded(_result())
+    panel.start_install()
+    assert opened == [_result().manifest.download_url]
+    assert panel._install_worker is None
+
+
 def test_preflight_requires_publisher(panel):
     panel._result = _result()
     panel._config = UpdateConfig(
@@ -131,8 +171,8 @@ def test_preflight_requires_publisher(panel):
         trusted_hosts=(TRUSTED_HOST,),
     )
     assert panel._preflight_install() is False
-    assert panel._status.text() == "Updates are not configured."
-    assert "publisher" in panel._detail.text().lower()
+    assert panel._status.text() == "Automatic installation is not available."
+    assert "certificate" in panel._detail.text().lower()
 
 
 def test_preflight_requires_updater_component(panel, monkeypatch):
@@ -183,7 +223,8 @@ def test_latest_version_link_opens_install_prompt(qt_app, theme, monkeypatch):
         qt_app.processEvents()
 
 
-def test_about_dialog_hosts_the_update_panel(qt_app, theme):
+def test_about_dialog_hosts_the_update_panel(qt_app, theme, monkeypatch):
+    monkeypatch.setattr("config.UPDATE_MANIFEST_URL", "")
     settings = SimpleNamespace(update_manifest_url="", update_publisher="")
     dialog = AboutDialog(theme, None, settings=settings)
     dialog.show()

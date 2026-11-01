@@ -4,14 +4,16 @@ This document describes the implemented About / Check for Updates / automatic
 update system, how to configure it, how to sign and publish releases, and what
 has and has not been verified.
 
-> **Status: implemented, but not operational out of the box.**
-> No update endpoint, publisher or manifest key is baked into a source build.
-> IDM reports “Updates are not configured.” until `GITHUB_OWNER` and
-> `EXPECTED_PUBLISHER` are set in `config.py`, the manifest URL is set in
-> **Options → Updates**, or environment variables provide them. Source builds
-> cannot install updates because they have no `IDM_Updater.exe`; only the
-> packaged build (`build_windows.ps1`) contains it. Nothing in the UI pretends
-> otherwise.
+> **Status: update checks are operational; automatic installation requires code signing.**
+> `config.py` contains the public GitHub endpoint and an Ed25519 manifest key, so
+> packaged builds verify a signed `update/latest.json` and report new versions.
+> `EXPECTED_PUBLISHER` is intentionally empty because no CA-issued Authenticode
+> certificate exists yet. In that state IDM never runs an installer
+> automatically: it shows the update and offers a **Download Installer** button
+> that opens the GitHub release asset in the browser. Automatic installation
+> resumes on the first build released with a trusted publisher and a signed
+> installer. Source builds cannot install updates because they have no
+> `IDM_Updater.exe`; only the packaged build (`build_windows.ps1`) contains it.
 
 ## What is implemented
 
@@ -29,7 +31,10 @@ has and has not been verified.
 - **Update notification**: when a newer version is found, IDM shows a
   non-modal notification with the version, release date and release notes.
   “Install Now” opens the normal consent flow, and “Remind Me Later” postpones
-  this exact version; the next interval tick does not nag about it again.
+  this exact version; the next interval tick does not nag about it again. When
+  the build has no trusted publisher, the notification instead offers
+  **Download Installer**, which opens the manifest’s GitHub asset in the browser
+  and never executes anything.
 - **Optional automatic download** (off by default) fetches and verifies the
   package in the background. Installation still requires explicit approval
   unless the user has deliberately turned off “Ask before installing”.
@@ -79,8 +84,9 @@ has and has not been verified.
 - **Update history** records started, succeeded, failed and rolled-back events
   in `update-history.json`, with a bounded number of entries.
 - **No fake operations**: if the endpoint, publisher, manifest key or updater
-  component is missing, the UI explains exactly what is missing and installation
-  does not start.
+  component is missing, the UI explains exactly what is missing. Missing
+  publisher verification switches to manual download; it never installs an
+  unverified package.
 
 ## Central configuration
 
@@ -90,14 +96,14 @@ trust anchors are declared. No update URL is hardcoded in another module.
 | Constant | Purpose |
 | --- | --- |
 | `APP_NAME`, `CURRENT_VERSION` | Imported from `idm/version.py`; single version source. |
-| `GITHUB_OWNER` | **REQUIRED.** GitHub user or organization that owns `IDM-Update-Server`. Empty in a source checkout. |
-| `GITHUB_REPO` | Update-server repository name, default `IDM-Update-Server`. |
-| `GITHUB_MANIFEST_BRANCH`, `GITHUB_MANIFEST_PATH` | Default `main` and `latest.json`. |
+| `GITHUB_OWNER` | `servicingcentrecomputer-maker`, the public organization that owns the repository holding the signed manifest. |
+| `GITHUB_REPO` | `IDM`; the manifest lives beside the source code. |
+| `GITHUB_MANIFEST_BRANCH`, `GITHUB_MANIFEST_PATH` | `main` and `update/latest.json`. |
 | `UPDATE_MANIFEST_URL` | Derived public HTTPS URL. Empty while `GITHUB_OWNER` is empty, which produces the “not configured” state instead of contacting a fake server. |
 | `ALLOWED_MANIFEST_HOSTS` | `raw.githubusercontent.com`, `github.com`, `api.github.com`. |
 | `ALLOWED_DOWNLOAD_HOSTS` | `github.com` plus the GitHub asset CDN hosts `objects.githubusercontent.com` and `release-assets.githubusercontent.com`. |
-| `EXPECTED_PUBLISHER` | **REQUIRED for installation.** Exact Authenticode signer name for `IDM_Setup.exe`. |
-| `MANIFEST_PUBLIC_KEY` | Optional base64 Ed25519 public key. When set, manifests must be signed. |
+| `EXPECTED_PUBLISHER` | **Empty in 2.0.1.** No CA-issued Authenticode certificate exists yet, so automatic installation stays disabled and the UI offers manual download. Set the exact signer name when a certificate is available. |
+| `MANIFEST_PUBLIC_KEY` | Base64 Ed25519 public key embedded in 2.0.1; every manifest must be signed with the matching private key, which is kept outside this repository. |
 | `UPDATE_CHANNEL` | Default channel: `stable` or `beta`. |
 | `UPDATE_CONNECT_TIMEOUT`, `UPDATE_READ_TIMEOUT` | 10 s connect, 30 s read. |
 | `UPDATE_MAX_MANIFEST_BYTES`, `UPDATE_MAX_INSTALLER_BYTES` | 512 KiB and 512 MiB. |
@@ -144,12 +150,28 @@ The manifest host is always trusted automatically. GitHub-hosted manifests also
 trust the standard GitHub release-asset CDN hosts. Every other download host must
 be listed in `ALLOWED_DOWNLOAD_HOSTS` or `IDM_UPDATE_TRUSTED_HOSTS`.
 
-The publisher is **not** optional for installation. A check can run without it,
-but **Update Now** refuses to download until a publisher is configured.
+The publisher is **not** optional for automatic installation. A check can run
+without it, but **Update Now** refuses to download and install until a publisher
+is configured.
+
+### Unsigned builds: manual download
+
+When the endpoint is configured but `EXPECTED_PUBLISHER` is empty (the 2.0.1
+state), IDM:
+
+- verifies the signed manifest and reports the available version normally;
+- replaces **Update Now** with **Download Installer**, which opens the
+  manifest’s HTTPS GitHub asset in the default browser (`QDesktopServices`);
+- shows the same manual option in the update notification and skips the
+  optional automatic download;
+- never downloads, verifies or executes the package itself.
+
+This is a deliberate safe degradation, not a bypass: automatic installation
+returns as soon as a build embeds a trusted publisher and ships signed
+installers. The manifest itself remains Ed25519-verified in every case.
 
 ### Safe defaults
 
-- No default endpoint, publisher or manifest key.
 - HTTPS only; plain HTTP, embedded credentials and IP-literal URLs are rejected.
 - The manifest is limited to 512 KiB and the installer to 512 MiB.
 - Timeouts are 10 seconds to connect and 30 seconds per read.
@@ -164,14 +186,14 @@ The client accepts exactly these fields; anything else is an error.
 {
   "app_name": "IDM",
   "channel": "stable",
-  "latest_version": "1.1.0",
+  "latest_version": "2.0.1",
   "minimum_supported_version": "1.0.0",
-  "release_date": "2026-11-15",
+  "release_date": "2026-11-01",
   "release_notes": [
-    "Faster pause/resume handling",
-    "Fixed a queue ordering issue"
+    "Update endpoint and signed manifest configured",
+    "Manual download when no code-signing certificate is available"
   ],
-  "download_url": "https://github.com/<owner>/IDM-Update-Server/releases/download/v1.1.0/IDM_Setup_1.1.0.exe",
+  "download_url": "https://github.com/servicingcentrecomputer-maker/IDM/releases/download/v2.0.1/IDM_Setup_2.0.1.exe",
   "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
   "package_size": 73400320,
   "mandatory": false,
@@ -193,9 +215,10 @@ The client accepts exactly these fields; anything else is an error.
 | `mandatory` | Strict JSON boolean. Mandatory updates still require explicit user consent. |
 | `manifest_signature` | Required string. Empty for an unsigned manifest; base64 Ed25519 signature otherwise. |
 
-The sample in [`update/latest.json`](../update/latest.json) and the
-`IDM-Update-Server` template intentionally contain `updates.example.com` and an
-all-zero hash. They are templates, **not working releases**.
+The live [`update/latest.json`](../update/latest.json) is signed and points at
+the published GitHub release asset. The `IDM-Update-Server` template still
+contains `updates.example.com` and an all-zero hash; it is a template, **not a
+working release**.
 
 ### Signed manifests
 
@@ -219,21 +242,48 @@ compromised. SHA-256 alone is not trusted when a key is configured.
 
    ```powershell
    .\.venv\Scripts\python.exe scripts\sign_manifest.py sign `
-     --manifest .\IDM-Update-Server\latest.json `
-     --private-key C:\secure\idm-manifest.pem
+     --manifest .\update\latest.json `
+     --private-key C:\Users\<you>\.idm-signing\manifest-private.pem
    ```
 
-   `scripts/build_release.ps1` does this automatically when
-   `MANIFEST_PUBLIC_KEY` is set and `-ManifestPrivateKey` is supplied.
+   The private key used for 2.0.1 is kept outside the repository at
+   `C:\Users\<you>\.idm-signing\manifest-private.pem`; back it up securely and
+   never commit it. `scripts/build_release.ps1` can sign and publish a manifest
+   in a separate update-server checkout when `MANIFEST_PUBLIC_KEY` is set and
+   `-ManifestPrivateKey` is supplied; the main-repository layout is signed with
+   the command above.
 
 The signed bytes are the canonical JSON of every field except
 `manifest_signature`: UTF-8, sorted keys, compact separators, no ASCII escaping.
 `scripts/sign_manifest.py verify` and `scripts/validate_manifest.py` reproduce the
 same verification locally.
 
-## Hosting: GitHub Releases + `IDM-Update-Server`
+## Hosting: GitHub Releases + the signed manifest
 
-The recommended layout is the one in
+The current release keeps the signed manifest at
+`update/latest.json` in the main public IDM repository and the installer as a
+GitHub Release asset. No separate server repository is required.
+
+```
+IDM/
+  update/latest.json          # signed manifest served from raw.githubusercontent.com
+  ...
+```
+
+1. Publish the release tag and upload `IDM_Setup_<version>.exe` as a release
+   asset. Never commit installers to the repository.
+2. Point `download_url` at
+   `https://github.com/servicingcentrecomputer-maker/IDM/releases/download/v<version>/IDM_Setup_<version>.exe`.
+   GitHub redirects to `objects.githubusercontent.com` or
+   `release-assets.githubusercontent.com`; both are trusted for GitHub manifests.
+3. Update and sign `update/latest.json` on `main`. Do not use a short-lived
+   asset URL that changes on every publish.
+4. Keep old installer assets available; a rollback publishes an older manifest,
+   but IDM will still never downgrade below the installed version.
+
+### Optional: separate `IDM-Update-Server` repository
+
+The recommended layout for a standalone manifest repository is the one in
 [`IDM-Update-Server/`](../IDM-Update-Server):
 
 ```
@@ -579,7 +629,7 @@ an installation.
 
 ## Test coverage
 
-`pytest tests -q` currently passes **455 tests**. Relevant files:
+`pytest tests -q` currently passes **460 tests**. Relevant files:
 
 | Scenario | Coverage |
 | --- | --- |
@@ -616,8 +666,9 @@ end-to-end update requires signing as described above.
 
 | Symptom | Cause / fix |
 | --- | --- |
-| “Updates are not configured.” | Set `GITHUB_OWNER` in `config.py`, or the manifest URL in Options → Updates, or `IDM_UPDATE_MANIFEST_URL`. |
-| “No trusted update publisher is configured.” | Set the exact signer name in Options → Updates or `IDM_UPDATE_PUBLISHER`. |
+| “Updates are not configured.” | The build has no manifest URL. Set `GITHUB_OWNER` in `config.py`, the manifest URL in Options → Updates, or `IDM_UPDATE_MANIFEST_URL`. |
+| “No trusted update publisher is configured.” | Expected in the unsigned 2.0.1 build. Use **Download Installer** and run the setup manually; configure a publisher only after obtaining a CA-issued code-signing certificate. |
+| **Download Installer** opens the browser | Expected when no trusted publisher is embedded. IDM never downloads or runs the installer automatically in that state. |
 | “The Updater component is missing.” | You are running from source or a broken install. Use the packaged build/reinstall. |
 | “The update server returned HTTP 404 …” | The manifest URL is wrong or the release was not published. |
 | “The download host … is not trusted.” | Put the installer on a GitHub release or add the CDN host with `IDM_UPDATE_TRUSTED_HOSTS`. |
@@ -644,6 +695,9 @@ end-to-end update requires signing as described above.
   authenticated endpoints are not supported.
 - A signed release requires a code-signing certificate and a manually controlled
   signing step; the build script does not hold signing secrets.
+- The 2.0.1 build is unsigned. Automatic installation stays disabled until a
+  CA-issued certificate is configured and a signed build is published; update
+  checks and signed manifests work today.
 - Authenticode verification is Windows-specific. Other platforms are not
   supported for installation.
 - Windows 11 is the tested platform. The code and installer target Windows 10

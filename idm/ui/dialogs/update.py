@@ -6,8 +6,8 @@ import logging
 import time
 from pathlib import Path
 
-from PySide6.QtCore import QThread, Qt, Signal
-from PySide6.QtGui import QFont
+from PySide6.QtCore import QThread, Qt, QUrl, Signal
+from PySide6.QtGui import QDesktopServices, QFont
 from PySide6.QtWidgets import (
     QCheckBox,
     QFrame,
@@ -124,6 +124,7 @@ class UpdatePanel(QWidget):
         self._last_action = "check"
         self._auto_install = False
         self._confirmed_install = False
+        self._manual_download = False
         self._download_started_at = 0.0
         self._check_worker: UpdateCheckWorker | None = None
         self._install_worker: UpdateInstallWorker | None = None
@@ -222,7 +223,7 @@ class UpdatePanel(QWidget):
         self._update_button = primary_button("Update Now")
         self._update_button.setIcon(icons.icon("download", "#FFFFFF", 16))
         self._update_button.hide()
-        self._update_button.clicked.connect(self._prompt_install)
+        self._update_button.clicked.connect(self._update_action)
         buttons.addWidget(self._update_button)
         layout.addLayout(buttons)
 
@@ -230,17 +231,24 @@ class UpdatePanel(QWidget):
         root.setContentsMargins(0, 0, 0, 0)
         root.addWidget(card)
 
-        self._latest_value.clicked.connect(self._prompt_install)
+        self._latest_value.clicked.connect(self._update_action)
         self._theme.changed.connect(self._sync_icons)
 
     # ------------------------------------------------------------------ public
     def set_result(self, result: UpdateCheckResult) -> None:
         """Show an already-completed check, for the notification window."""
+        self._config = config_from_settings(self._settings)
+        self._manual_download = (
+            self._config.configured and not self._config.installation_supported
+        )
         self._on_check_succeeded(result)
 
     def start_download(self) -> None:
         """Download and verify only; the user installs from this panel."""
         if self._busy or self._closing:
+            return
+        if self._manual_download:
+            self._open_manual_download()
             return
         self._auto_install = False
         if self._preflight_install():
@@ -249,6 +257,9 @@ class UpdatePanel(QWidget):
     def start_install(self) -> None:
         """Download and install after the user clicked “Install Now”."""
         if self._busy or self._closing:
+            return
+        if self._manual_download:
+            self._open_manual_download()
             return
         self._auto_install = True
         if not self._confirm_install_if_needed():
@@ -265,6 +276,7 @@ class UpdatePanel(QWidget):
             return
         config = config_from_settings(self._settings)
         self._config = config
+        self._manual_download = config.configured and not config.installation_supported
         try:
             config.require_endpoint()
         except UpdateConfigurationError as exc:
@@ -347,14 +359,27 @@ class UpdatePanel(QWidget):
 
         if result.update_available:
             self._latest_value.set_link_enabled(True)
-            self._set_status("New version available.", "warn")
-            if result.mandatory:
+            if self._manual_download:
+                self._update_button.setText("Download Installer")
+                self._set_status(
+                    "New version available. Automatic installation is disabled.",
+                    "warn",
+                )
                 self._detail.setText(
-                    "This update is required because your installed version is "
-                    "no longer supported. It is still installed only with your "
-                    "consent."
+                    f"Download IDM {result.latest_version} from GitHub and run "
+                    "the installer manually. Automatic installation requires a "
+                    "build signed with a trusted code-signing certificate."
                 )
                 self._detail.show()
+            else:
+                self._set_status("New version available.", "warn")
+                if result.mandatory:
+                    self._detail.setText(
+                        "This update is required because your installed version "
+                        "is no longer supported. It is still installed only with "
+                        "your consent."
+                    )
+                    self._detail.show()
             self._update_button.show()
             self._update_button.setEnabled(True)
             self._retry_button.hide()
@@ -398,8 +423,38 @@ class UpdatePanel(QWidget):
             self._check_worker = None
 
     # ------------------------------------------------------------------ install
+    def _update_action(self) -> None:
+        if self._manual_download:
+            self._open_manual_download()
+        else:
+            self._prompt_install()
+
+    def _open_manual_download(self) -> None:
+        result = self._result
+        if result is None:
+            return
+        url = QUrl(result.manifest.download_url)
+        if url.scheme().lower() != "https" or not QDesktopServices.openUrl(url):
+            self._show_message(
+                "Could not open the download page.",
+                "Open the IDM release page in your browser and download the "
+                "installer manually.",
+                "error",
+            )
+            return
+        self._show_message(
+            "Download opened in your browser.",
+            f"Run the downloaded installer to update IDM to "
+            f"{result.latest_version}. Automatic installation is disabled in "
+            "this build.",
+            "ok",
+        )
+
     def _prompt_install(self) -> None:
         if self._busy or self._closing or self._result is None:
+            return
+        if self._manual_download:
+            self._open_manual_download()
             return
         result = self._result
         if self._prepared is not None:
@@ -500,7 +555,9 @@ class UpdatePanel(QWidget):
             config.require_publisher()
         except UpdateConfigurationError as exc:
             self._last_action = "check"
-            self._show_message("Updates are not configured.", str(exc), "error")
+            self._show_message(
+                "Automatic installation is not available.", str(exc), "error"
+            )
             self._retry_button.hide()
             return False
 

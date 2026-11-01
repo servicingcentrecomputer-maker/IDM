@@ -1,18 +1,19 @@
 {
   "app_name": "IDM",
   "channel": "stable",
-  "latest_version": "1.1.0",
+  "latest_version": "2.0.1",
   "minimum_supported_version": "1.0.0",
-  "release_date": "2026-11-15",
+  "release_date": "2026-11-01",
   "release_notes": [
-    "EXAMPLE FILE - replace every placeholder before publishing.",
-    "This manifest is intentionally not usable for a real release.",
-    "The download URL and SHA-256 must describe the signed IDM_Setup.exe you upload.",
-    "Set the exact Authenticode signer name in Options > Updates or IDM_UPDATE_PUBLISHER.",
-    "Set manifest_signature to \"\" for an unsigned test manifest, or sign it with scripts/sign_manifest.py."
+    "Update endpoint configured: Check for Updates now reads the signed manifest from GitHub.",
+    "Every update manifest is verified with an embedded Ed25519 public key.",
+    "Unsigned builds offer Download Installer in the browser instead of automatic installation.",
+    "Clearer security messaging when a trusted code-signing certificate is required.",
+    "Application, updater, native host, installer and browser extensions report 2.0.1."
   ],
-  "download_url": "https://updates.example.com/releases/IDM_Setup_1.1.0.exe",
-  "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "download_url": "https://github.com/servicingcentrecomputer-maker/IDM/releases/download/v2.0.1/IDM_Setup_2.0.1.exe",
+  "sha256": "907dbda971597fe372679f6ba7bbbddd90ab5c2f97371436bd8673eaece3f9bd",
+  "package_size": 61961926,
   "mandatory": false,
-  "manifest_signature": ""
+  "manifest_signature": "d8z5HSkAKk5QPgUrITa/8TVvj3SjuMM4H564E/6NOhdQBpY3ZZQoFYuDl7+19Ldefz+tUO1/CSUiGcDEiWotCw=="
 }

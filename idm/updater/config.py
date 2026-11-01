@@ -60,6 +60,11 @@ class UpdateConfig:
         return bool(self.manifest_url)
 
     @property
+    def installation_supported(self) -> bool:
+        """True when an installer can be verified and installed automatically."""
+        return bool(self.manifest_url and self.expected_publisher)
+
+    @property
     def signature_required(self) -> bool:
         return bool(self.manifest_public_key)
 
@@ -74,9 +79,10 @@ class UpdateConfig:
     def require_publisher(self) -> None:
         if not self.expected_publisher:
             raise UpdateConfigurationError(
-                "No trusted update publisher is configured. Set the exact "
-                "Authenticode signer name in Options → Updates or the "
-                "IDM_UPDATE_PUBLISHER environment variable."
+                "Automatic installation requires a CA-issued Authenticode "
+                "code-signing certificate, and this build has no trusted "
+                "publisher configured. Download the installer from the "
+                "release page and run it manually."
             )
 
 

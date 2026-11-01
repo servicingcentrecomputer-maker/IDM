@@ -1,4 +1,4 @@
-; IDM 2.0.0 installer
+; IDM 2.0.1 installer
 ; Compile with Inno Setup 6.3+ or 7.x:
 ;   ISCC.exe installer\IDM_Setup.iss
 ;
@@ -19,8 +19,8 @@
 ; store.
 
 #define MyAppName "IDM"
-#define MyAppVersion "2.0.0"
-#define MyAppVerName "IDM 2.0.0"
+#define MyAppVersion "2.0.1"
+#define MyAppVerName "IDM 2.0.1"
 #define MyAppPublisher "IDM"
 #define MyAppExeName "IDM.exe"
 #define NativeHostExeName "IDM_NativeHost.exe"
@@ -37,7 +37,7 @@ AppVersion={#MyAppVersion}
 AppVerName={#MyAppVerName}
 AppPublisher={#MyAppPublisher}
 AppCopyright=Copyright (C) 2026 IDM
-VersionInfoVersion=2.0.0.0
+VersionInfoVersion=2.0.1.0
 VersionInfoTextVersion={#MyAppVersion}
 VersionInfoCompany={#MyAppPublisher}
 VersionInfoDescription=IDM Setup

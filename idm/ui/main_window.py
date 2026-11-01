@@ -84,6 +84,7 @@ from .dialogs.progress import DownloadProgressDialog
 from .dialogs.queue import QueueDialog
 from .dialogs.scheduler import SchedulerDialog
 from .dialogs.update_notification import UpdateNotificationDialog
+from .update_service import config_from_settings
 from .download_view import DownloadView
 from .sidebar import Sidebar
 from .status_bar import StatusBar
@@ -814,7 +815,10 @@ class MainWindow(QMainWindow):
             return
 
         logger.info("Update available: IDM %s", latest)
-        if self._settings.update_auto_download:
+        manual_download = not config_from_settings(
+            self._settings
+        ).installation_supported
+        if self._settings.update_auto_download and not manual_download:
             self._open_update_window(result, "download", modal=False)
             return
         if not self._settings.update_notify:
@@ -837,7 +841,14 @@ class MainWindow(QMainWindow):
     def _show_update_notification(self, result) -> None:
         self._dismiss_update_notification()
         dialog = UpdateNotificationDialog(
-            self._theme, result, self._settings, self._open_update_window, self
+            self._theme,
+            result,
+            self._settings,
+            self._open_update_window,
+            self,
+            manual_download=not config_from_settings(
+                self._settings
+            ).installation_supported,
         )
         dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
         dialog.destroyed.connect(self._clear_update_notification)

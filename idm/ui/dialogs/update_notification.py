@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import QTimer, Qt
+from PySide6.QtCore import QTimer, Qt, QUrl
+from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
@@ -37,6 +38,7 @@ class UpdateNotificationDialog(BaseDialog):
         settings,
         on_open_update,
         parent=None,
+        manual_download: bool = False,
     ) -> None:
         super().__init__(theme, parent)
         self.setModal(False)
@@ -44,6 +46,7 @@ class UpdateNotificationDialog(BaseDialog):
         self._result = result
         self._settings = settings
         self._on_open_update = on_open_update
+        self._manual_download = bool(manual_download)
 
         self.setWindowTitle(f"{APP_NAME} Update")
         self.setMinimumWidth(560)
@@ -105,6 +108,15 @@ class UpdateNotificationDialog(BaseDialog):
         notes.setMaximumHeight(210)
         root.addWidget(notes)
 
+        if self._manual_download:
+            hint = make_label(
+                "Automatic installation is unavailable in this unsigned build. "
+                "The installer opens in your browser; run it manually to update.",
+                "HintLabel",
+            )
+            hint.setWordWrap(True)
+            root.addWidget(hint)
+
         root.addWidget(make_divider())
         buttons = QHBoxLayout()
         buttons.setSpacing(8)
@@ -118,13 +130,18 @@ class UpdateNotificationDialog(BaseDialog):
 
         buttons.addStretch(1)
 
-        download = secondary_button("Download Update")
-        download.clicked.connect(lambda: self._open("download"))
-        buttons.addWidget(download)
+        if self._manual_download:
+            download = primary_button("Download Installer")
+            download.clicked.connect(self._open_manual_download)
+            buttons.addWidget(download)
+        else:
+            download = secondary_button("Download Update")
+            download.clicked.connect(lambda: self._open("download"))
+            buttons.addWidget(download)
 
-        install = primary_button("Install Now")
-        install.clicked.connect(lambda: self._open("install"))
-        buttons.addWidget(install)
+            install = primary_button("Install Now")
+            install.clicked.connect(lambda: self._open("install"))
+            buttons.addWidget(install)
         root.addLayout(buttons)
 
         self._theme.changed.connect(self._sync_icons)
@@ -142,6 +159,13 @@ class UpdateNotificationDialog(BaseDialog):
         result = self._result
         self.accept()
         QTimer.singleShot(0, lambda: callback(result, mode))
+
+    def _open_manual_download(self) -> None:
+        url = QUrl(self._result.manifest.download_url)
+        if url.scheme().lower() != "https":
+            return
+        if QDesktopServices.openUrl(url):
+            self.accept()
 
     def _remind_later(self) -> None:
         try:

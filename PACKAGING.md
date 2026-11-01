@@ -10,10 +10,10 @@ Windows distribution of IDM (`IDM_Setup.exe`).
 | PyInstaller onedir build (`dist\IDM\IDM.exe`) | Built and verified |
 | Native messaging host (`dist\IDM\IDM_NativeHost.exe`) | Built by the spec as a Qt-free one-file executable |
 | Browser extensions (`dist-extensions\*.zip`) | Validated and packaged by `scripts\package_extensions.py` |
-| Standalone updater (`dist\IDM\IDM_Updater.exe`) | Built and verified (frozen `--version` exits 0; version resource 1.0.0.0) |
+| Standalone updater (`dist\IDM\IDM_Updater.exe`) | Built and verified (frozen `--version` exits 0; version resource 2.0.1.0) |
 | Inno Setup installer (`dist-installer\IDM_Setup.exe`) | Built and verified on Windows 11 x64 (browser registration tasks require Inno Setup to compile) |
-| Automated test suite | 378 tests passed |
-| Automatic update system | Implemented; requires a configured HTTPS endpoint and code signing |
+| Automated test suite | 460 tests passed |
+| Automatic update system | Update checks and Ed25519-signed manifests are operational; automatic installation requires a CA-issued code-signing certificate |
 | Browser integration | Implemented and unit-tested; real browser interception requires manual verification |
 | Silent install / launch / uninstall / upgrade / data preservation | Passed on Windows 11 x64 |
 | Windows 10 x64 | **Not tested** — no Windows 10 machine was available |
@@ -44,8 +44,8 @@ they are run on a machine that has not seen them before. See
 | `idm\updater\` | Qt-free update core: manifest validator, checker, downloader, verifier, updater |
 | `config.py` | Central GitHub owner/repo, endpoint, channel, publisher and manifest key |
 | `scripts\` | Release build/sign/hash/validate scripts and publishing checklist |
-| `IDM-Update-Server\` | Separate public manifest repository scaffold and docs |
-| `update\latest.json` | Example update manifest (placeholders, not a live endpoint) |
+| `IDM-Update-Server\` | Manifest schema, CI workflow and docs for an optional separate manifest repository |
+| `update\latest.json` | Signed live update manifest for the configured GitHub repository |
 | `docs\UPDATES.md` | Update-system configuration, signing and publishing guide |
 | `docs\BROWSER_INTEGRATION.md` | Browser installation, protocol, limitations and test checklist |
 | `docs\BROWSER_STORE_PUBLISHING.md` | Chrome Web Store, Edge Add-ons and Mozilla Add-ons submission |
@@ -334,12 +334,15 @@ changed to 1.0.1, and one uninstall entry remained.
 ## Automatic updates
 
 The checker, downloader, verifier and standalone updater are implemented in
-this repository, but the system is **not operational out of the box**. A
-release build has no GitHub owner, endpoint or trusted publisher configured, so
-the About dialog reports that automatic updates are not configured instead of
-pretending to work. Full setup, manifest schema, hosting and publishing steps
-are in [docs/UPDATES.md](docs/UPDATES.md) and
-[IDM-Update-Server/docs](../IDM-Update-Server/docs).
+this repository. 2.0.1 ships with the public GitHub endpoint and an Ed25519
+manifest public key, so **Check for Updates** works and every manifest is
+signature-verified. `EXPECTED_PUBLISHER` is empty because no CA-issued
+code-signing certificate exists, so automatic installation is disabled: the UI
+offers **Download Installer**, which opens the GitHub release asset in the
+browser and never runs the package itself. Full setup, manifest schema, hosting
+and publishing steps are in [docs/UPDATES.md](docs/UPDATES.md);
+`IDM-Update-Server/` remains the schema and CI scaffold for a separate manifest
+repository.
 
 What is shipped:
 
@@ -347,9 +350,10 @@ What is shipped:
   with a timeout and HTTPS-only manifest retrieval.
 - Strict manifest validation (`app_name`, `channel`, `latest_version`,
   `minimum_supported_version`, `release_date`, `release_notes`, `download_url`,
-  `sha256`, `mandatory`, `manifest_signature`), unknown/duplicate field
-  rejection, stable/beta channel policy, optional Ed25519 manifest signature
-  and semantic-version comparison with a downgrade guard.
+  `sha256`, `optional package_size`, `mandatory`, `manifest_signature`),
+  unknown/duplicate field rejection, stable/beta channel policy, mandatory
+  Ed25519 manifest signature and semantic-version comparison with a downgrade
+  guard.
 - Download to `%TEMP%\IDM-Update-*` with progress, cancel and retry; SHA-256
   verification; Windows Authenticode verification with an exact publisher
   match.

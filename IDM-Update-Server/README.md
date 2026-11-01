@@ -1,8 +1,17 @@
 # IDM-Update-Server
 
-Public update manifest repository for the IDM Windows desktop application.
+Manifest schema, CI workflow and documentation for the IDM update server.
 
-IDM reads `latest.json` over HTTPS from a stable raw GitHub URL:
+The live manifest for the current release is kept in the main IDM repository at
+`update/latest.json` and is read by packaged builds from:
+
+```
+https://raw.githubusercontent.com/servicingcentrecomputer-maker/IDM/main/update/latest.json
+```
+
+This directory remains the scaffold for deploying the same manifest in a
+separate public repository, which this document describes. IDM reads
+`latest.json` over HTTPS from a stable raw GitHub URL:
 
 ```
 https://raw.githubusercontent.com/<owner>/IDM-Update-Server/main/latest.json

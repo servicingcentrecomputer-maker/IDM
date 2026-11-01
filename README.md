@@ -563,7 +563,7 @@ The test suite uses a local threaded HTTP server with routes for:
   integration for `IDM_NativeHost.exe`
 - offscreen UI rendering and native screenshots
 
-Run everything with `python -m pytest tests -q` (currently 378 tests).
+Run everything with `python -m pytest tests -q` (currently 460 tests).
 
 ## Roadmap
 

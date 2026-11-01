@@ -106,6 +106,45 @@ def test_install_now_opens_the_update_window(qt_app, theme):
         qt_app.processEvents()
 
 
+def test_manual_mode_offers_download_only(qt_app, theme, monkeypatch):
+    opened: list[str] = []
+
+    class FakeDesktop:
+        @staticmethod
+        def openUrl(url):
+            opened.append(url.toString())
+            return True
+
+    monkeypatch.setattr(
+        "idm.ui.dialogs.update_notification.QDesktopServices", FakeDesktop
+    )
+    callbacks: list[tuple] = []
+    dialog = UpdateNotificationDialog(
+        theme,
+        _result(),
+        FakeSettings(),
+        lambda *args: callbacks.append(args),
+        manual_download=True,
+    )
+    dialog.show()
+    qt_app.processEvents()
+    try:
+        texts = [button.text() for button in dialog.findChildren(QPushButton)]
+        assert "Install Now" not in texts
+        assert "Download Installer" in texts
+        labels = " ".join(label.text() for label in dialog.findChildren(QLabel))
+        assert "unsigned build" in labels
+        QTest.mouseClick(
+            _button(dialog, "Download Installer"), Qt.MouseButton.LeftButton
+        )
+        qt_app.processEvents()
+        assert opened == [_result().manifest.download_url]
+        assert callbacks == []
+    finally:
+        dialog.deleteLater()
+        qt_app.processEvents()
+
+
 def test_remind_me_later_stores_a_version_specific_reminder(qt_app, theme):
     settings = FakeSettings()
     dialog = UpdateNotificationDialog(theme, _result(), settings, lambda *args: None)
@@ -186,11 +225,26 @@ def test_main_window_auto_download_option_opens_download_mode(window, monkeypatc
         "_open_update_window",
         lambda result, mode="notes", modal=True: opened.append((result, mode, modal)),
     )
+    window._settings.update_publisher = "IDM"
     window._settings.update_auto_download = True
     window._on_update_available(_result())
     assert len(opened) == 1
     assert opened[0][1] == "download"
     assert opened[0][2] is False
+
+
+def test_main_window_manual_mode_skips_auto_download(window, monkeypatch):
+    opened: list[object] = []
+    shown: list[UpdateCheckResult] = []
+    monkeypatch.setattr(
+        window, "_open_update_window", lambda *args, **kwargs: opened.append(args)
+    )
+    monkeypatch.setattr(window, "_show_update_notification", shown.append)
+    window._settings.update_publisher = ""
+    window._settings.update_auto_download = True
+    window._on_update_available(_result())
+    assert opened == []
+    assert len(shown) == 1
 
 
 def test_main_window_can_disable_notifications(window, monkeypatch):

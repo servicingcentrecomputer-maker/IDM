@@ -107,3 +107,19 @@ def test_config_requires_endpoint_and_publisher():
         config.require_endpoint()
     with pytest.raises(UpdateConfigurationError, match="publisher"):
         config.require_publisher()
+
+
+def test_installation_supported_needs_endpoint_and_publisher():
+    assert UpdateConfig(
+        manifest_url="https://updates.example.com/latest.json",
+        expected_publisher="IDM",
+        trusted_hosts=(),
+    ).installation_supported
+    assert not UpdateConfig(
+        manifest_url="https://updates.example.com/latest.json",
+        expected_publisher="",
+        trusted_hosts=(),
+    ).installation_supported
+    assert not UpdateConfig(
+        manifest_url="", expected_publisher="IDM", trusted_hosts=()
+    ).installation_supported
