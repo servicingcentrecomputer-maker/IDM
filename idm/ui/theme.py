@@ -835,6 +835,234 @@ QLabel#PlannedNote {
     padding: 5px 8px;
     font-size: 10px;
 }
+
+/* ------------------------------------------------------------ v3 workspace */
+QScrollArea#SidebarScroll,
+QWidget#SidebarContent {
+    background: transparent;
+    border: none;
+}
+QWidget#PageArea {
+    background-color: transparent;
+}
+QScrollArea#PageScroll {
+    background: transparent;
+    border: none;
+}
+QWidget#PageScrollBody {
+    background: transparent;
+}
+QFrame#StatCard {
+    background-color: $surface;
+    border: 1px solid $border;
+    border-radius: $panel_radius;
+}
+QFrame#PanelCard {
+    background-color: $surface;
+    border: 1px solid $border;
+    border-radius: $panel_radius;
+}
+QFrame#PanelCard:hover {
+    border-color: $border;
+}
+QLabel#PanelTitle {
+    font-size: 12px;
+    font-weight: 600;
+    color: $text;
+}
+QLabel#PanelCaption {
+    font-size: 10px;
+    color: $text_faint;
+}
+QLabel#StatValue {
+    font-size: 21px;
+    font-weight: 700;
+    color: $text;
+}
+QLabel#StatLabel {
+    font-size: 10px;
+    font-weight: 700;
+    color: $text_faint;
+    letter-spacing: 1px;
+}
+QLabel#StatDetail {
+    font-size: 10px;
+    color: $text_muted;
+}
+QFrame#StatCard[accent="true"] QLabel#StatValue {
+    color: $accent;
+}
+QFrame#StatCard[accent="true"] {
+    border-color: $accent;
+}
+QFrame#NoticeBanner {
+    background-color: $accent_soft;
+    border: 1px solid $border;
+    border-radius: $control_radius;
+}
+QFrame#NoticeBanner[kind="warning"] {
+    background-color: $warning_soft;
+}
+QFrame#NoticeBanner[kind="danger"] {
+    background-color: $danger_soft;
+}
+QFrame#NoticeBanner[kind="success"] {
+    background-color: $success_soft;
+}
+QLabel#NoticeTitle {
+    font-size: 11px;
+    font-weight: 600;
+    color: $text;
+}
+QLabel#NoticeText {
+    font-size: 10px;
+    color: $text_muted;
+}
+QLabel#SectionHeading {
+    font-size: 12px;
+    font-weight: 600;
+    color: $text;
+}
+QPushButton#SubtleButton {
+    background-color: transparent;
+    border: 1px solid $border;
+    color: $text_muted;
+    padding: 4px 10px;
+}
+QPushButton#SubtleButton:hover {
+    background-color: $accent_soft;
+    border-color: $accent;
+    color: $text;
+}
+QPushButton#PillButton {
+    background-color: transparent;
+    border: 1px solid $border;
+    border-radius: 11px;
+    color: $text_muted;
+    padding: 2px 11px;
+    min-height: 18px;
+}
+QPushButton#PillButton:hover {
+    border-color: $accent;
+    color: $accent;
+}
+QPushButton#PillButton:checked {
+    background-color: $accent_soft;
+    border-color: $accent;
+    color: $accent;
+    font-weight: 600;
+}
+QComboBox#PeriodCombo {
+    min-width: 108px;
+}
+QTableView#VideoTable {
+    background-color: $surface;
+    alternate-background-color: $surface;
+    border: none;
+    gridline-color: transparent;
+    outline: none;
+    selection-background-color: $selection;
+    selection-color: $text;
+}
+QTableView#VideoTable::item {
+    border: none;
+    border-bottom: 1px solid $border_soft;
+    background-color: transparent;
+    padding: 0px;
+}
+QTableView#VideoTable::item:selected {
+    background-color: $selection;
+}
+QTableView#VideoTable::item:hover {
+    background-color: $row_hover;
+}
+QListWidget#NotificationList {
+    background-color: $surface;
+    border: none;
+    outline: none;
+}
+QListWidget#NotificationList::item {
+    border-bottom: 1px solid $border_soft;
+    padding: 7px 10px;
+    color: $text;
+}
+QListWidget#NotificationList::item:selected {
+    background-color: $selection;
+    color: $text;
+}
+QListWidget#ActivityList {
+    background-color: transparent;
+    border: none;
+    outline: none;
+}
+QListWidget#ActivityList::item {
+    border-bottom: 1px solid $border_soft;
+    padding: 6px 2px;
+    color: $text;
+}
+QListWidget#ActivityList::item:selected {
+    background-color: $selection;
+    color: $text;
+}
+QFrame#SettingRow {
+    background-color: transparent;
+    border-bottom: 1px solid $border_soft;
+}
+QLabel#SettingTitle {
+    color: $text;
+    font-size: 11px;
+    font-weight: 600;
+}
+QLabel#SettingHint {
+    color: $text_faint;
+    font-size: 10px;
+}
+QLabel#Badge {
+    background-color: $accent;
+    color: #FFFFFF;
+    border-radius: 8px;
+    font-size: 9px;
+    font-weight: 700;
+    padding: 1px 6px;
+}
+QLabel#EmptyCaption {
+    color: $text_faint;
+    font-size: 11px;
+}
+QFrame#BrowserRow {
+    background-color: $surface;
+    border: 1px solid $border;
+    border-radius: $control_radius;
+}
+QLabel#BrowserName {
+    font-size: 12px;
+    font-weight: 600;
+    color: $text;
+}
+QLabel#BrowserStatus {
+    font-size: 10px;
+    color: $text_muted;
+}
+QLabel#BrowserStatus[state="ok"] {
+    color: $success;
+}
+QLabel#BrowserStatus[state="warn"] {
+    color: $warning;
+}
+QLabel#BrowserStatus[state="error"] {
+    color: $danger;
+}
+QProgressBar#MiniProgress {
+    min-height: 5px;
+    max-height: 5px;
+    border: none;
+    border-radius: 2px;
+    background-color: $track;
+}
+QProgressBar#MiniProgress::chunk {
+    background-color: $accent;
+    border-radius: 2px;
+}
 """
 )
 

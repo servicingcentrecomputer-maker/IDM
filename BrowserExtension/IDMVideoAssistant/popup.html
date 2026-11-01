@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>IDM Video Assistant</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <img class="logo" src="icons/icon48.png" alt="" width="32" height="32" />
+      <div class="identity">
+        <h1>IDM Video Assistant</h1>
+        <p class="muted">Direct media links for your desktop download manager</p>
+      </div>
+      <span class="version" id="version"></span>
+    </header>
+
+    <div class="statusbar">
+      <span class="status status-checking" id="connection">Checking</span>
+      <button type="button" class="link-button" id="test-connection">
+        Test connection
+      </button>
+    </div>
+
+    <div class="notice hidden" id="notice" role="status" aria-live="polite"></div>
+
+    <section class="card">
+      <div class="card-head">
+        <h2>Page detection</h2>
+        <label class="switch" title="Enable or disable media link detection">
+          <input type="checkbox" id="detect-toggle" />
+          <span class="switch-track" aria-hidden="true"></span>
+        </label>
+      </div>
+      <p class="hint" id="detect-hint">
+        Detection only inspects the page you are on. It does not read browsing
+        history.
+      </p>
+      <div class="field">
+        <label for="file-types">Supported file types</label>
+        <div class="field-row">
+          <input
+            type="text"
+            id="file-types"
+            spellcheck="false"
+            autocomplete="off"
+            placeholder="mp4, webm, m4v, mov, mp3, m4a, ogg, wav"
+          />
+          <button type="button" class="secondary" id="save-types">Save</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="card" id="media-card">
+      <div class="card-head">
+        <h2 id="media-heading">Media on this page</h2>
+        <button type="button" class="link-button" id="refresh-media">
+          Rescan
+        </button>
+      </div>
+      <p class="hint ellipsis" id="page-domain">No page selected</p>
+
+      <div class="restricted hidden" id="restricted-box">
+        <strong id="restricted-title">Restricted platform</strong>
+        <p id="restricted-text"></p>
+        <div class="official hidden" id="official-box">
+          <p class="official-heading" id="official-heading"></p>
+          <ul class="official-list" id="official-list"></ul>
+          <p class="official-note" id="official-note"></p>
+        </div>
+        <button type="button" class="secondary" id="open-official">
+          Open the page
+        </button>
+      </div>
+
+      <div class="detect-off hidden" id="detect-off">
+        Media detection is off. Turn it on to list direct links from this page.
+      </div>
+
+      <ul class="media-list hidden" id="media-list"></ul>
+
+      <div class="empty hidden" id="media-empty">
+        No direct media links were found on this page. IDM only downloads media
+        URLs you are authorised to transfer.
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card-head">
+        <h2>Active transfers</h2>
+        <span class="muted small" id="host-version"></span>
+      </div>
+      <ul class="transfer-list hidden" id="transfer-list"></ul>
+      <div class="empty small hidden" id="transfer-empty">
+        No active transfers. Start one from a media link above.
+      </div>
+      <p class="last-result" id="last-result"></p>
+    </section>
+
+    <section class="card">
+      <h2>Browser downloads</h2>
+      <label class="row">
+        <input type="checkbox" id="auto-intercept" />
+        <span>
+          Send browser downloads to IDM
+          <small>Pauses the browser copy and hands it to IDM.</small>
+        </span>
+      </label>
+      <label class="row">
+        <input type="checkbox" id="ask-folder" />
+        <span>
+          Ask where to save
+          <small>Shows IDM's folder picker for each browser download.</small>
+        </span>
+      </label>
+      <label class="row">
+        <input type="checkbox" id="notify-add" />
+        <span>
+          Show a notification after adding
+          <small>Displays an in-page confirmation and a toolbar badge.</small>
+        </span>
+      </label>
+    </section>
+
+    <details class="card permissions">
+      <summary>Permissions used by this extension</summary>
+      <ul>
+        <li><strong>nativeMessaging</strong> — talks only to the local <code>com.idm.native</code> host.</li>
+        <li><strong>downloads</strong> — detects new browser downloads and pauses the browser copy after IDM accepts it.</li>
+        <li><strong>contextMenus</strong> — adds the right-click download actions.</li>
+        <li><strong>storage</strong> — keeps your toggles and file types on this device.</li>
+        <li><strong>activeTab</strong> — reads the current tab when you open this popup.</li>
+        <li><strong>http/https page access</strong> — reads links and media elements on the page you visit so it can detect direct media. It is not used to read history.</li>
+      </ul>
+      <div class="permission-actions">
+        <button type="button" class="secondary" id="manage-extension">
+          Extension details
+        </button>
+        <button type="button" class="secondary" id="copy-id">
+          Copy extension ID
+        </button>
+      </div>
+    </details>
+
+    <footer class="footer">
+      <button type="button" class="primary" id="open-idm">Open IDM</button>
+      <button type="button" class="secondary" id="open-settings">
+        Download settings
+      </button>
+      <span class="muted small" id="browser-name"></span>
+    </footer>
+
+    <script src="media-detector.js"></script>
+    <script src="native-messaging.js"></script>
+    <script src="popup.js"></script>
+  </body>
+</html>

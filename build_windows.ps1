@@ -1,7 +1,7 @@
 <#
 .SYNOPSIS
     Builds IDM.exe, IDM_NativeHost.exe, IDM_Updater.exe, the browser
-    extension packages and IDM_Setup.exe.
+    extension packages and IDM-Setup-<version>.exe.
 
 .DESCRIPTION
     Creates or reuses .venv, installs runtime and build dependencies, validates
@@ -18,7 +18,7 @@
     ISCC.exe or the Inno Setup installation directory.
 
 .PARAMETER Force
-    Replace an existing dist-installer\IDM_Setup.exe without prompting.
+    Replace an existing dist-installer\IDM-Setup-<version>.exe without prompting.
 
 .PARAMETER RecreateVenv
     Delete and recreate .venv before installing dependencies.
@@ -68,7 +68,7 @@ $StagedUpdaterExe = Join-Path $DistAppDir "IDM_Updater.exe"
 $StagedNativeHostExe = Join-Path $DistAppDir "IDM_NativeHost.exe"
 $DistExtensionsDir = Join-Path $Root "dist-extensions"
 $DistInstallerDir = Join-Path $Root "dist-installer"
-$InstallerPath = Join-Path $DistInstallerDir "IDM_Setup.exe"
+$InstallerPath = $null
 
 function Write-Step {
     param([string]$Message)
@@ -245,6 +245,7 @@ if ($AppVersion -notmatch '^\d+\.\d+\.\d+$') {
 }
 $versionParts = $AppVersion.Split('.')
 $numericVersion = "$AppVersion.0"
+$InstallerPath = Join-Path $DistInstallerDir "IDM-Setup-$AppVersion.exe"
 
 foreach ($infoFile in @("version_info.txt", "version_info_updater.txt", "version_info_native_host.txt")) {
     $info = Get-Content -LiteralPath (Join-Path $Root $infoFile) -Raw
@@ -267,6 +268,25 @@ foreach ($browser in @("chrome", "edge", "firefox")) {
     $extensionVersion = (Get-Content -LiteralPath $manifestFile -Raw | ConvertFrom-Json).version
     if ($extensionVersion -ne $AppVersion) {
         throw "extensions\$browser\manifest.json version $extensionVersion does not match CURRENT_VERSION $AppVersion."
+    }
+}
+
+$videoAssistantDir = Join-Path $Root "BrowserExtension\IDMVideoAssistant"
+$videoManifestFile = Join-Path $videoAssistantDir "manifest.json"
+if (-not (Test-Path -LiteralPath $videoManifestFile -PathType Leaf)) {
+    throw "BrowserExtension\IDMVideoAssistant\manifest.json is missing."
+}
+$videoVersion = (Get-Content -LiteralPath $videoManifestFile -Raw | ConvertFrom-Json).version
+if ($videoVersion -ne $AppVersion) {
+    throw "BrowserExtension\IDMVideoAssistant\manifest.json version $videoVersion does not match CURRENT_VERSION $AppVersion."
+}
+foreach ($required in @(
+    "background.js", "content.js", "media-detector.js", "native-messaging.js",
+    "popup.html", "popup.css", "popup.js",
+    "icons\icon16.png", "icons\icon32.png", "icons\icon48.png", "icons\icon128.png"
+)) {
+    if (-not (Test-Path -LiteralPath (Join-Path $videoAssistantDir $required) -PathType Leaf)) {
+        throw "BrowserExtension\IDMVideoAssistant\$required is missing."
     }
 }
 
@@ -330,7 +350,7 @@ if ((-not $SkipInstaller) -and (Test-Path -LiteralPath $InstallerPath) -and (-no
     if ([Console]::IsInputRedirected) {
         throw "An existing installer exists at $InstallerPath. Rerun with -Force to replace it."
     }
-    $answer = Read-Host "An existing IDM_Setup.exe will be replaced. Continue? [y/N]"
+    $answer = Read-Host "An existing installer will be replaced. Continue? [y/N]"
     if ($answer -notmatch '^(?i:y|yes)$') {
         throw "Build aborted; the existing installer was kept."
     }
@@ -353,6 +373,7 @@ Write-Host "dist\IDM_NativeHost.exe and dist-extensions only."
 # ---------------------------------------------------------------- extensions
 Write-Step "Validating and packaging browser extensions"
 Invoke-Checked $PythonExe @((Join-Path $Root "scripts\package_extensions.py")) "Packaging browser extensions"
+Invoke-Checked $PythonExe @((Join-Path $Root "scripts\package_video_assistant.py")) "Packaging IDM Video Assistant"
 foreach ($extensionPackage in @("IDM_Chrome_Extension.zip", "IDM_Edge_Extension.zip", "IDM_Firefox_Extension.zip")) {
     $packagePath = Join-Path $DistExtensionsDir $extensionPackage
     if (-not (Test-Path -LiteralPath $packagePath -PathType Leaf)) {
@@ -436,7 +457,7 @@ if ($SkipInstaller) {
 }
 
 # ---------------------------------------------------------------- Inno Setup
-Write-Step "Building IDM_Setup.exe with Inno Setup"
+Write-Step "Building IDM-Setup-$AppVersion.exe with Inno Setup"
 $iscc = Find-ISCC
 Write-Host "Using ISCC: $iscc"
 New-Item -ItemType Directory -Force -Path $DistInstallerDir | Out-Null

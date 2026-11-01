@@ -114,8 +114,22 @@ def _write_registry_value(subkey: str, value: str) -> list[str]:
     return errors
 
 
-def _remove_registry_value(subkey: str, expected: str) -> list[str]:
+def _same_path(first: str | Path, second: str | Path) -> bool:
+    def normalized(value: str | Path) -> str:
+        return os.path.normcase(os.path.abspath(os.fspath(value)))
+
+    return normalized(first) == normalized(second)
+
+
+def _remove_registry_value(
+    subkey: str, expected: str | Path | Iterable[str | Path]
+) -> list[str]:
     """Remove our value/key without disturbing a value owned by someone else."""
+    targets = (
+        [expected]
+        if isinstance(expected, (str, Path))
+        else [item for item in expected]
+    )
     errors: list[str] = []
     for label, flag in _registry_views():
         try:
@@ -129,7 +143,9 @@ def _remove_registry_value(subkey: str, expected: str) -> list[str]:
                     current, _ = winreg.QueryValueEx(key, "")
                 except FileNotFoundError:
                     current = None
-                if current is not None and Path(str(current)) != Path(expected):
+                if current is not None and not any(
+                    _same_path(current, target) for target in targets
+                ):
                     errors.append(
                         f"{label}-bit view points to a different manifest; left unchanged."
                     )
@@ -151,6 +167,38 @@ def _remove_registry_value(subkey: str, expected: str) -> list[str]:
             except OSError as exc:
                 errors.append(f"{label}-bit view key: {exc}")
     return errors
+
+
+def installed_root() -> Path | None:
+    """Folder that contains the frozen executable, or None when running from source."""
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return None
+
+
+def installed_manifest_file(browser: str) -> Path | None:
+    """Manifest written by the installer, next to IDM.exe."""
+    root = installed_root()
+    if root is None:
+        return None
+    return root / "browser-integration" / f"{NATIVE_HOST_NAME}.{browser}.json"
+
+
+def manifest_candidates(browser: str) -> list[Path]:
+    """Every location IDM may have registered for this browser."""
+    paths = [manifest_file(browser)]
+    installed = installed_manifest_file(browser)
+    if installed is not None and not any(_same_path(installed, path) for path in paths):
+        paths.append(installed)
+    return paths
+
+
+def extension_dir() -> Path:
+    """Folder holding the unpacked IDM Video Assistant extension."""
+    root = installed_root()
+    if root is not None:
+        return root / "BrowserExtension" / "IDMVideoAssistant"
+    return project_root() / "BrowserExtension" / "IDMVideoAssistant"
 
 
 def write_manifest(
@@ -188,13 +236,27 @@ def install_browser(
     if not resolved.is_file():
         raise RegistrationError(f"The native host executable was not found: {resolved}")
 
-    path = write_manifest(browser, resolved, environ)
+    # Reuse a manifest the installer already wrote (custom install folders,
+    # Program Files) before creating a second copy in AppData.
+    path: Path | None = None
+    for candidate in manifest_candidates(browser):
+        if not candidate.is_file():
+            continue
+        try:
+            manifest = json.loads(candidate.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if not validate_native_manifest(manifest, browser, resolved):
+            path = candidate
+            break
+    if path is None:
+        path = write_manifest(browser, resolved, environ)
     errors = _write_registry_value(registry_subkey(browser), str(path))
     read_back = read_registration(browser)
     registered_views = [
         label
         for label, value in read_back["values"].items()
-        if value and Path(value) == path
+        if value and _same_path(value, path)
     ]
     if not registered_views:
         raise RegistrationError(
@@ -217,9 +279,10 @@ def uninstall_browser(browser: str) -> dict[str, Any]:
     """Remove our registration and manifest for one browser."""
     _require_windows()
     path = manifest_file(browser)
-    errors = _remove_registry_value(registry_subkey(browser), path)
+    paths = manifest_candidates(browser)
+    errors = _remove_registry_value(registry_subkey(browser), paths)
     still_referenced = any(
-        value and Path(value) == path
+        value and any(_same_path(value, candidate) for candidate in paths)
         for value in read_registration(browser)["values"].values()
     )
     removed_manifest = False
@@ -240,16 +303,32 @@ def uninstall_browser(browser: str) -> dict[str, Any]:
 
 def browser_status(browser: str) -> dict[str, Any]:
     _require_windows()
-    path = manifest_file(browser)
+    paths = manifest_candidates(browser)
+    existing = [candidate for candidate in paths if candidate.is_file()]
+    path = existing[0] if existing else paths[0]
     registry = read_registration(browser)
     manifest: dict[str, Any] | None = None
     problems: list[str] = []
-    if path.is_file():
+
+    # Prefer a manifest that actually validates, so a stale copy in AppData
+    # cannot hide a working installer registration.
+    for candidate in existing:
+        try:
+            data = json.loads(candidate.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        host_value = data.get("path")
+        host_path = Path(host_value) if isinstance(host_value, str) else None
+        if not validate_native_manifest(data, browser, host_path):
+            path = candidate
+            manifest = data
+            break
+    if manifest is None and path.is_file():
         try:
             manifest = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError) as exc:
             problems.append(f"The manifest cannot be read: {exc}")
-    else:
+    if manifest is None and not path.is_file():
         problems.append("The native messaging manifest does not exist.")
 
     host: Path | None = None
@@ -262,12 +341,12 @@ def browser_status(browser: str) -> dict[str, Any]:
     registered_views = [
         label
         for label, value in registry["values"].items()
-        if value and Path(value) == path
+        if value and any(_same_path(value, candidate) for candidate in paths)
     ]
     other_views = [
         label
         for label, value in registry["values"].items()
-        if value and Path(value) != path
+        if value and not any(_same_path(value, candidate) for candidate in paths)
     ]
     if not registered_views:
         problems.append("The registry does not point at IDM's manifest.")
@@ -307,10 +386,16 @@ def project_root() -> Path:
 
 def default_host_paths(root: Path | None = None) -> list[Path]:
     root = root or project_root()
-    candidates = [
-        root / "dist" / "IDM" / "IDM_NativeHost.exe",
-        root / "dist" / "IDM_NativeHost.exe",
-    ]
+    candidates: list[Path] = []
+    installed = installed_root()
+    if installed is not None:
+        candidates.append(installed / "IDM_NativeHost.exe")
+    candidates.extend(
+        [
+            root / "dist" / "IDM" / "IDM_NativeHost.exe",
+            root / "dist" / "IDM_NativeHost.exe",
+        ]
+    )
     local = os.environ.get("LOCALAPPDATA")
     if local:
         candidates.append(Path(local) / "Programs" / "IDM" / "IDM_NativeHost.exe")

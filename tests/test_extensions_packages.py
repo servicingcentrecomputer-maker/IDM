@@ -149,10 +149,21 @@ def test_installer_registers_each_browser_and_ships_extension_zips() -> None:
     assert FIREFOX_EXTENSION_ID in text
     assert "browser-extensions" in text
     assert "uninsdeletevalue uninsdeletekeyifempty" in text
-    # Extensions are shipped as archives, never silently installed.
+    # Extensions are shipped as archives and as the unpacked V3 assistant,
+    # never silently installed.
     assert "dist-extensions\\*.zip" in text
+    assert r"BrowserExtension\IDMVideoAssistant\*" in text
     assert "chrome-extension://" in text
     assert "allowed_extensions" in text
+    assert "OutputBaseFilename=IDM-Setup-{#MyAppVersion}" in text
+    assert '#define MyAppVersion "3.0.0"' in text
+
+
+def test_package_release_uses_the_versioned_installer_name() -> None:
+    from scripts import package_release
+
+    assert package_release.read_source_version(ROOT) == "3.0.0"
+    package_release.validate_versions(ROOT, "3.0.0")
 
 
 def test_pyinstaller_build_includes_the_native_host() -> None:

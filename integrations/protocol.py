@@ -24,7 +24,7 @@ from urllib.parse import urlparse
 
 from idm.core.url_utils import sanitize_filename, validate_url
 
-PROTOCOL_VERSION = 1
+PROTOCOL_VERSION = 2
 
 # Chrome rejects host->browser messages above 1 MiB.  Browser->host requests
 # are capped at the same value so a compromised page cannot exhaust memory.
@@ -49,6 +49,11 @@ _CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 MAX_URL_LENGTH = 8192
 MAX_FILENAME_LENGTH = 512
 MAX_TOTAL_BYTES = 10**15
+MAX_PAGE_TITLE_LENGTH = 512
+MAX_QUALITY_LABEL_LENGTH = 64
+MAX_DURATION_SECONDS = 7 * 24 * 60 * 60
+MEDIA_KINDS = frozenset({"", "video", "audio"})
+DETECTION_SOURCES = frozenset({"", "link", "media", "browser", "manual"})
 
 
 class ProtocolError(ValueError):
@@ -286,6 +291,62 @@ def validate_ask_folder(value: Any) -> bool:
     )
 
 
+def validate_page_title(value: Any) -> str:
+    if value in (None, ""):
+        return ""
+    try:
+        return _text(value, MAX_PAGE_TITLE_LENGTH)
+    except ValidationError as exc:
+        raise ValidationError("The page title is invalid.", "invalid_metadata") from exc
+
+
+def validate_media_kind(value: Any) -> str:
+    if value in (None, ""):
+        return ""
+    try:
+        text = _text(value, 16).lower()
+    except ValidationError as exc:
+        raise ValidationError("The media kind is invalid.", "invalid_metadata") from exc
+    if text not in MEDIA_KINDS:
+        raise ValidationError("The media kind is invalid.", "invalid_metadata")
+    return text
+
+
+def validate_quality_label(value: Any) -> str:
+    if value in (None, ""):
+        return ""
+    try:
+        return _text(value, MAX_QUALITY_LABEL_LENGTH)
+    except ValidationError as exc:
+        raise ValidationError(
+            "The quality label is invalid.", "invalid_metadata"
+        ) from exc
+
+
+def validate_duration_seconds(value: Any) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValidationError("The media duration is invalid.", "invalid_metadata")
+    if value < 0 or value > MAX_DURATION_SECONDS:
+        raise ValidationError("The media duration is invalid.", "invalid_metadata")
+    return value or None
+
+
+def validate_detected_by(value: Any) -> str:
+    if value in (None, ""):
+        return ""
+    try:
+        text = _text(value, 32).lower()
+    except ValidationError as exc:
+        raise ValidationError(
+            "The detection source is invalid.", "invalid_metadata"
+        ) from exc
+    if text not in DETECTION_SOURCES:
+        raise ValidationError("The detection source is invalid.", "invalid_metadata")
+    return text
+
+
 def normalize_download_request(message: dict[str, Any]) -> dict[str, Any]:
     """Return a validated, normalized download request."""
     if not isinstance(message, dict):
@@ -300,6 +361,11 @@ def normalize_download_request(message: dict[str, Any]) -> dict[str, Any]:
     mime = validate_mime(message.get("mime"))
     total_bytes = validate_total_bytes(message.get("total_bytes"))
     ask_folder = validate_ask_folder(message.get("ask_folder"))
+    page_title = validate_page_title(message.get("page_title"))
+    media_kind = validate_media_kind(message.get("media_kind"))
+    quality_label = validate_quality_label(message.get("quality_label"))
+    duration_seconds = validate_duration_seconds(message.get("duration_seconds"))
+    detected_by = validate_detected_by(message.get("detected_by"))
 
     return {
         "type": "request_download",
@@ -314,6 +380,11 @@ def normalize_download_request(message: dict[str, Any]) -> dict[str, Any]:
         "mime": mime,
         "total_bytes": total_bytes,
         "ask_folder": ask_folder,
+        "page_title": page_title,
+        "media_kind": media_kind,
+        "quality_label": quality_label,
+        "duration_seconds": duration_seconds,
+        "detected_by": detected_by,
     }
 
 
@@ -390,8 +461,14 @@ def response_error(
 
 __all__ = [
     "DuplicateTracker",
+    "MAX_DURATION_SECONDS",
+    "MAX_FILENAME_LENGTH",
     "MAX_MESSAGE_BYTES",
+    "MAX_PAGE_TITLE_LENGTH",
+    "MAX_QUALITY_LABEL_LENGTH",
+    "MAX_TOTAL_BYTES",
     "MAX_URL_LENGTH",
+    "MEDIA_KINDS",
     "PROTOCOL_VERSION",
     "ProtocolError",
     "REQUEST_TYPES",
@@ -407,10 +484,15 @@ __all__ = [
     "require_request_id",
     "response_error",
     "response_ok",
+    "validate_detected_by",
+    "validate_duration_seconds",
     "validate_filename",
     "validate_http_url",
+    "validate_media_kind",
     "validate_mime",
+    "validate_page_title",
     "validate_ask_folder",
+    "validate_quality_label",
     "validate_referrer",
     "validate_total_bytes",
     "write_message",

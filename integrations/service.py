@@ -251,6 +251,12 @@ class BrowserIntegrationService(QObject):
                 else ""
             ),
             "referrer": item.referrer,
+            "media_kind": item.media_kind,
+            "media_label": item.media_label,
+            "page_url": item.page_url,
+            "page_title": item.page_title,
+            "source_domain": item.source_domain,
+            "file_format": item.file_format,
         }
 
     # ------------------------------------------------------------------ downloads
@@ -313,6 +319,13 @@ class BrowserIntegrationService(QObject):
             start_immediately=bool(self._settings.start_immediately),
             source_browser=browser,
             referrer=normalized["referrer"],
+            content_type=normalized["mime"],
+            page_url=normalized["page_url"],
+            page_title=normalized["page_title"],
+            quality_label=normalized["quality_label"],
+            duration_seconds=normalized["duration_seconds"],
+            detected_by=normalized["detected_by"],
+            media_kind_hint=normalized["media_kind"],
         )
         logger.info(
             "Accepted %s download %s (%s) from %s",

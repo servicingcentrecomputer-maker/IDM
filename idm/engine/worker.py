@@ -13,8 +13,10 @@ restart; corrupted data is never finalized.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
+import shutil
 import threading
 import time
 from collections import deque
@@ -28,6 +30,7 @@ import requests
 from PySide6.QtCore import QThread, Signal
 
 from ..constants import APP_USER_AGENT, CHUNK_SIZE
+from ..core.media import normalize_sha256
 from ..core.url_utils import (
     parse_content_range_start,
     parse_content_range_total,
@@ -83,6 +86,7 @@ class DownloadWorker(QThread):
     state = Signal(str, object, str)
     metadata = Signal(str, "qint64", str, bool)
     segments = Signal(str, object)
+    integrity = Signal(str, str, str)
     completed = Signal(str, str)
     failed = Signal(str, str)
     thread_finished = Signal(str)
@@ -98,6 +102,7 @@ class DownloadWorker(QThread):
         limiter: SpeedLimiter,
         connections: int = 1,
         speed_limit_kbps: int = 0,
+        expected_sha256: str = "",
         parent=None,
     ) -> None:
         super().__init__(parent)
@@ -110,6 +115,7 @@ class DownloadWorker(QThread):
         self.auto_retry = auto_retry
         self.max_retries = max(0, int(max_retries))
         self.connections = max(1, min(int(connections), MAX_SEGMENTS))
+        self.expected_sha256 = normalize_sha256(expected_sha256)
         self._limiter = limiter
         self._local_limiter = SpeedLimiter(max(0, int(speed_limit_kbps)) * 1024)
 
@@ -121,6 +127,7 @@ class DownloadWorker(QThread):
         self._plan: SegmentPlan | None = None
         self._segments_disabled = False
         self._remote_restarts = 0
+        self._session: requests.Session | None = None
 
     # ------------------------------------------------------------------ control
     def request_pause(self) -> None:
@@ -204,7 +211,23 @@ class DownloadWorker(QThread):
                 self.state.emit(self.download_id, outcome, "")
                 return
         finally:
+            self._close_session()
             self.thread_finished.emit(self.download_id)
+
+    def _http_session(self) -> requests.Session:
+        # Reuse TCP/TLS connections across retries and resume attempts.
+        if self._session is None:
+            self._session = requests.Session()
+        return self._session
+
+    def _close_session(self) -> None:
+        session = self._session
+        self._session = None
+        if session is not None:
+            try:
+                session.close()
+            except Exception:  # pragma: no cover - defensive cleanup
+                logger.debug("Could not close the HTTP session", exc_info=True)
 
     def _terminal_status_if_requested(self) -> DownloadStatus | None:
         if self._cancel_requested.is_set() or self._stop_requested.is_set():
@@ -288,7 +311,7 @@ class DownloadWorker(QThread):
             headers["Range"] = f"bytes={offset}-"
 
         try:
-            response = requests.get(
+            response = self._http_session().get(
                 self.url,
                 headers=headers,
                 stream=True,
@@ -343,6 +366,7 @@ class DownloadWorker(QThread):
                         ) from exc
                 total = _content_length(response.headers)
                 range_supported = accept_ranges
+                self._ensure_disk_space(total)
                 if (
                     offset == 0
                     and not self._segments_disabled
@@ -388,9 +412,13 @@ class DownloadWorker(QThread):
                     )
             elif status == 206:
                 start = parse_content_range_start(response.headers.get("Content-Range"))
-                if start is not None and start != offset:
+                if start is None or start != offset:
                     raise _FatalError("The server returned an unexpected byte range.")
                 total = parse_content_range_total(response.headers.get("Content-Range"))
+                if total is not None and total < offset:
+                    raise _FatalError(
+                        "The server reported a file smaller than the resumed data."
+                    )
                 if total is None:
                     length = _content_length(response.headers)
                     total = offset + length if length is not None else None
@@ -419,6 +447,7 @@ class DownloadWorker(QThread):
         content_type: str,
         range_supported: bool,
     ) -> DownloadStatus:
+        self._ensure_disk_space(total, offset)
         self.metadata.emit(self.download_id, total or 0, content_type, range_supported)
         self.state.emit(self.download_id, DownloadStatus.DOWNLOADING, "")
         self._speed_samples.clear()
@@ -491,6 +520,7 @@ class DownloadWorker(QThread):
         self._plan = plan
         if not fresh and not self.part_path.exists():
             raise _RangeLost("the partial file is missing")
+        self._ensure_disk_space(plan.total, plan.downloaded)
 
         if plan.complete:
             try:
@@ -603,6 +633,22 @@ class DownloadWorker(QThread):
     def _segment_worker(
         self, segment: Segment, plan: SegmentPlan, stop_event: threading.Event
     ) -> None:
+        session = requests.Session()
+        try:
+            self._segment_loop(segment, plan, stop_event, session)
+        finally:
+            try:
+                session.close()
+            except Exception:  # pragma: no cover - defensive cleanup
+                logger.debug("Could not close a segment session", exc_info=True)
+
+    def _segment_loop(
+        self,
+        segment: Segment,
+        plan: SegmentPlan,
+        stop_event: threading.Event,
+        session: requests.Session,
+    ) -> None:
         attempts = 0
         while True:
             with self._segments_lock:
@@ -612,7 +658,7 @@ class DownloadWorker(QThread):
             if stop_event.is_set() or self._interrupted():
                 return
             try:
-                self._segment_request(segment, plan, stop_event)
+                self._segment_request(segment, plan, stop_event, session)
                 attempts = 0
             except (_RangeLost, _RemoteChanged, _FatalError):
                 raise
@@ -645,7 +691,11 @@ class DownloadWorker(QThread):
                 self.state.emit(self.download_id, DownloadStatus.DOWNLOADING, "")
 
     def _segment_request(
-        self, segment: Segment, plan: SegmentPlan, stop_event: threading.Event
+        self,
+        segment: Segment,
+        plan: SegmentPlan,
+        stop_event: threading.Event,
+        session: requests.Session,
     ) -> None:
         with self._segments_lock:
             offset = segment.next_offset
@@ -660,7 +710,7 @@ class DownloadWorker(QThread):
             "Range": f"bytes={offset}-{segment.end}",
         }
         try:
-            response = requests.get(
+            response = session.get(
                 self.url,
                 headers=headers,
                 stream=True,
@@ -767,6 +817,22 @@ class DownloadWorker(QThread):
         self.segments.emit(self.download_id, snapshot)
 
     # ------------------------------------------------------------------ helpers
+    def _ensure_disk_space(self, total: int | None, already_have: int = 0) -> None:
+        if not total or total <= 0:
+            return
+        required = max(0, int(total) - max(0, int(already_have)))
+        if required <= 0:
+            return
+        try:
+            free = shutil.disk_usage(self.folder).free
+        except OSError:
+            return
+        if free < required + 1024 * 1024:
+            raise _FatalError(
+                "There is not enough free disk space for this download "
+                f"({_format_bytes(required)} required, {_format_bytes(free)} free)."
+            )
+
     @staticmethod
     def _flush(handle) -> None:
         try:
@@ -783,6 +849,17 @@ class DownloadWorker(QThread):
     def _finalize(self) -> DownloadStatus:
         if not self.part_path.exists():
             raise _FatalError("The downloaded data is missing.")
+
+        if self.expected_sha256:
+            digest = _file_sha256(self.part_path)
+            if digest != self.expected_sha256:
+                self.integrity.emit(self.download_id, "mismatch", digest)
+                discard_partial(self.part_path)
+                raise _FatalError(
+                    "Integrity verification failed. The downloaded data did not "
+                    "match the expected SHA-256 and was discarded."
+                )
+            self.integrity.emit(self.download_id, "verified", digest)
 
         remove_journal(self.part_path)
         final_path = self.final_path
@@ -890,3 +967,11 @@ def _format_bytes(size: int) -> str:
             return f"{value:.1f} {unit}"
         value /= 1024
     return f"{value:.1f} TB"
+
+
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()

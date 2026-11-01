@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "IDM Integration Module for Microsoft Edge",
   "short_name": "IDM",
-  "version": "2.0.1",
+  "version": "3.0.0",
   "description": "Send downloads to Internet Download Manager with one click.",
   "minimum_chrome_version": "102",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAxMBWooa8cUWb3Z9DA9OIaxkAZipKE0252MaPnEFTCGArf8OISPlhl4hp0+u3MtUM/8qQ6iC/Iz7czGSyqcwuQr+EuDfFZVtDtChxAroien9msK4gGs8WnnAhMEKC7UuVVyg9n45EEa2u7gHUsD11iYBFX0veE8Jutak78MAwe/CIhhCWFyQCubIdW7T5e2agZ5ZgXX+pozZ54tmJFGdSt0OrUo/y/K3u1Afu2nEvW+vtV+SLIRUOxg3gBx0B4tKAbplNaH0lKeNqILs5eo89i7/fD2pj+73o2HrTSY1WZT2mpR0EHke+QccQDHcQaqSSKaZMNoqwq2TwiQyAt7PBdwIDAQAB",

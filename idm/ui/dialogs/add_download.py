@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QSignalBlocker, Qt, QTimer
+from PySide6.QtCore import QSignalBlocker, Qt, QTimer, QUrl
+from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QComboBox,
     QFileDialog,
@@ -13,9 +14,11 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QVBoxLayout,
+    QWidget,
 )
 
 from ...constants import CATEGORIES, PRIORITIES, PRIORITY_NORMAL
+from ...core.media_policy import restricted_platform, restriction_message
 from ...core.paths import default_download_dir, ensure_download_dir
 from ...core.probe import LinkProbe, ProbeResult
 from ...core.settings import AppSettings
@@ -43,15 +46,22 @@ from .common import (
 
 class AddDownloadDialog(BaseDialog):
     def __init__(
-        self, settings: AppSettings, theme: ThemeManager, parent=None
+        self,
+        settings: AppSettings,
+        theme: ThemeManager,
+        parent=None,
+        initial_category: str | None = None,
     ) -> None:
         super().__init__(theme, parent)
         self._settings = settings
+        self._initial_category = initial_category
         self._auto_filename = True
         self._auto_category = True
         self._last_probed_url = ""
         self._probe_result: ProbeResult | None = None
         self._result: dict | None = None
+        self._restricted_url = ""
+        self._restricted_platform = ""
 
         self.setWindowTitle("Add Download")
         self.setMinimumWidth(620)
@@ -86,11 +96,23 @@ class AddDownloadDialog(BaseDialog):
         self.url_edit.setMinimumHeight(32)
         form.addWidget(self.url_edit, 0, 1, 1, 2)
 
+        probe_row = QWidget()
+        probe_layout = QHBoxLayout(probe_row)
+        probe_layout.setContentsMargins(0, 0, 0, 0)
+        probe_layout.setSpacing(8)
         self.probe_label = QLabel("Paste a direct HTTP or HTTPS file link.")
         self.probe_label.setObjectName("ProbeLabel")
         self.probe_label.setProperty("state", "")
         self.probe_label.setWordWrap(True)
-        form.addWidget(self.probe_label, 1, 1, 1, 2)
+        probe_layout.addWidget(self.probe_label, 1)
+        self.open_page_button = secondary_button("Open official page")
+        self.open_page_button.setIcon(
+            icons.icon("external", self._theme.palette.text_muted, 14)
+        )
+        self.open_page_button.clicked.connect(self._open_official_page)
+        self.open_page_button.hide()
+        probe_layout.addWidget(self.open_page_button, 0)
+        form.addWidget(probe_row, 1, 1, 1, 2)
 
         form.addWidget(make_label("File Name:"), 2, 0)
         self.filename_edit = QLineEdit()
@@ -186,7 +208,7 @@ class AddDownloadDialog(BaseDialog):
         self.setTabOrder(self.start_button, self.later_button)
         self.setTabOrder(self.later_button, self.cancel_button)
 
-        self._select_category(CATEGORIES[-1])
+        self._select_category(initial_category or CATEGORIES[-1])
         self.adjustSize()
 
     # ------------------------------------------------------------------ values
@@ -233,13 +255,36 @@ class AddDownloadDialog(BaseDialog):
             else:
                 self.filename_edit.clear()
         self._update_hint()
+        self._apply_platform_policy(url)
 
-        if url and is_valid_url(url):
+        if url and is_valid_url(url) and not self._restricted_url:
             self._probe_timer.start()
+
+    def _apply_platform_policy(self, url: str) -> None:
+        platform = restricted_platform(url) if url else None
+        if not platform:
+            self._restricted_url = ""
+            self._restricted_platform = ""
+            self.open_page_button.hide()
+            self.start_button.setEnabled(True)
+            self.later_button.setEnabled(True)
+            return
+        self._restricted_url = url
+        self._restricted_platform = platform
+        self._set_probe(restriction_message(platform), "warn")
+        self.open_page_button.show()
+        self.start_button.setEnabled(False)
+        self.later_button.setEnabled(False)
+
+    def _open_official_page(self) -> None:
+        url = self._restricted_url or self.url_edit.text().strip()
+        if not url:
+            return
+        QDesktopServices.openUrl(QUrl(url))
 
     def _request_probe(self) -> None:
         url = self.url_edit.text().strip()
-        if not url or url == self._last_probed_url:
+        if not url or url == self._last_probed_url or self._restricted_url:
             return
         try:
             validate_url(url)
@@ -251,6 +296,8 @@ class AddDownloadDialog(BaseDialog):
 
     def _on_probe_finished(self, result: ProbeResult) -> None:
         if self.url_edit.text().strip() != self._last_probed_url:
+            return
+        if self._restricted_url:
             return
         self._probe_result = result
 
@@ -338,6 +385,12 @@ class AddDownloadDialog(BaseDialog):
             url = validate_url(self.url_edit.text())
         except InvalidUrlError as exc:
             self._show_error(str(exc))
+            self.url_edit.setFocus()
+            return
+
+        platform = restricted_platform(url)
+        if platform:
+            self._show_error(restriction_message(platform))
             self.url_edit.setFocus()
             return
 

@@ -102,8 +102,8 @@ trust anchors are declared. No update URL is hardcoded in another module.
 | `UPDATE_MANIFEST_URL` | Derived public HTTPS URL. Empty while `GITHUB_OWNER` is empty, which produces the “not configured” state instead of contacting a fake server. |
 | `ALLOWED_MANIFEST_HOSTS` | `raw.githubusercontent.com`, `github.com`, `api.github.com`. |
 | `ALLOWED_DOWNLOAD_HOSTS` | `github.com` plus the GitHub asset CDN hosts `objects.githubusercontent.com` and `release-assets.githubusercontent.com`. |
-| `EXPECTED_PUBLISHER` | **Empty in 2.0.1.** No CA-issued Authenticode certificate exists yet, so automatic installation stays disabled and the UI offers manual download. Set the exact signer name when a certificate is available. |
-| `MANIFEST_PUBLIC_KEY` | Base64 Ed25519 public key embedded in 2.0.1; every manifest must be signed with the matching private key, which is kept outside this repository. |
+| `EXPECTED_PUBLISHER` | **Empty in 3.0.0.** No CA-issued Authenticode certificate exists yet, so automatic installation stays disabled and the UI offers manual download. Set the exact signer name when a certificate is available. |
+| `MANIFEST_PUBLIC_KEY` | Base64 Ed25519 public key embedded in 3.0.0; every manifest must be signed with the matching private key, which is kept outside this repository. |
 | `UPDATE_CHANNEL` | Default channel: `stable` or `beta`. |
 | `UPDATE_CONNECT_TIMEOUT`, `UPDATE_READ_TIMEOUT` | 10 s connect, 30 s read. |
 | `UPDATE_MAX_MANIFEST_BYTES`, `UPDATE_MAX_INSTALLER_BYTES` | 512 KiB and 512 MiB. |
@@ -156,7 +156,7 @@ is configured.
 
 ### Unsigned builds: manual download
 
-When the endpoint is configured but `EXPECTED_PUBLISHER` is empty (the 2.0.1
+When the endpoint is configured but `EXPECTED_PUBLISHER` is empty (the 3.0.0
 state), IDM:
 
 - verifies the signed manifest and reports the available version normally;
@@ -186,14 +186,14 @@ The client accepts exactly these fields; anything else is an error.
 {
   "app_name": "IDM",
   "channel": "stable",
-  "latest_version": "2.0.1",
+  "latest_version": "3.0.0",
   "minimum_supported_version": "1.0.0",
   "release_date": "2026-11-01",
   "release_notes": [
     "Update endpoint and signed manifest configured",
     "Manual download when no code-signing certificate is available"
   ],
-  "download_url": "https://github.com/servicingcentrecomputer-maker/IDM/releases/download/v2.0.1/IDM_Setup_2.0.1.exe",
+  "download_url": "https://github.com/servicingcentrecomputer-maker/IDM/releases/download/v3.0.0/IDM-Setup-3.0.0.exe",
   "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
   "package_size": 73400320,
   "mandatory": false,
@@ -246,7 +246,7 @@ compromised. SHA-256 alone is not trusted when a key is configured.
      --private-key C:\Users\<you>\.idm-signing\manifest-private.pem
    ```
 
-   The private key used for 2.0.1 is kept outside the repository at
+   The private key used for 3.0.0 is kept outside the repository at
    `C:\Users\<you>\.idm-signing\manifest-private.pem`; back it up securely and
    never commit it. `scripts/build_release.ps1` can sign and publish a manifest
    in a separate update-server checkout when `MANIFEST_PUBLIC_KEY` is set and
@@ -667,7 +667,7 @@ end-to-end update requires signing as described above.
 | Symptom | Cause / fix |
 | --- | --- |
 | “Updates are not configured.” | The build has no manifest URL. Set `GITHUB_OWNER` in `config.py`, the manifest URL in Options → Updates, or `IDM_UPDATE_MANIFEST_URL`. |
-| “No trusted update publisher is configured.” | Expected in the unsigned 2.0.1 build. Use **Download Installer** and run the setup manually; configure a publisher only after obtaining a CA-issued code-signing certificate. |
+| “No trusted update publisher is configured.” | Expected in the unsigned 3.0.0 build. Use **Download Installer** and run the setup manually; configure a publisher only after obtaining a CA-issued code-signing certificate. |
 | **Download Installer** opens the browser | Expected when no trusted publisher is embedded. IDM never downloads or runs the installer automatically in that state. |
 | “The Updater component is missing.” | You are running from source or a broken install. Use the packaged build/reinstall. |
 | “The update server returned HTTP 404 …” | The manifest URL is wrong or the release was not published. |
@@ -695,7 +695,7 @@ end-to-end update requires signing as described above.
   authenticated endpoints are not supported.
 - A signed release requires a code-signing certificate and a manually controlled
   signing step; the build script does not hold signing secrets.
-- The 2.0.1 build is unsigned. Automatic installation stays disabled until a
+- The 3.0.0 build is unsigned. Automatic installation stays disabled until a
   CA-issued certificate is configured and a signed build is published; update
   checks and signed manifests work today.
 - Authenticode verification is Windows-specific. Other platforms are not

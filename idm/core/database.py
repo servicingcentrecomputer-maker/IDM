@@ -20,11 +20,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from .paths import database_file, ensure_app_layout
+from .paths import database_backup_dir, database_file, ensure_app_layout
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 _SCHEMA_V1 = """
 CREATE TABLE IF NOT EXISTS settings (
@@ -126,6 +126,66 @@ _V3_DOWNLOAD_COLUMNS = (
     ("referrer", "TEXT NOT NULL DEFAULT ''"),
 )
 
+# Schema version 4 adds media identification, source page metadata and
+# optional integrity verification.  Every column has a default so V2 rows
+# remain valid without rewriting them.
+_V4_DOWNLOAD_COLUMNS = (
+    ("media_kind", "TEXT NOT NULL DEFAULT ''"),
+    ("page_url", "TEXT NOT NULL DEFAULT ''"),
+    ("page_title", "TEXT NOT NULL DEFAULT ''"),
+    ("source_domain", "TEXT NOT NULL DEFAULT ''"),
+    ("file_format", "TEXT NOT NULL DEFAULT ''"),
+    ("expected_sha256", "TEXT NOT NULL DEFAULT ''"),
+    ("checksum_status", "TEXT NOT NULL DEFAULT 'not-requested'"),
+    ("integrity_verified_at", "TEXT NOT NULL DEFAULT ''"),
+)
+
+_SCHEMA_V4 = """
+CREATE TABLE IF NOT EXISTS media_metadata (
+    download_id      TEXT PRIMARY KEY,
+    media_kind       TEXT NOT NULL DEFAULT '',
+    page_url         TEXT NOT NULL DEFAULT '',
+    page_title       TEXT NOT NULL DEFAULT '',
+    source_domain    TEXT NOT NULL DEFAULT '',
+    quality_label    TEXT NOT NULL DEFAULT '',
+    duration_seconds INTEGER,
+    detected_by      TEXT NOT NULL DEFAULT '',
+    detected_at      TEXT NOT NULL,
+    FOREIGN KEY (download_id) REFERENCES downloads(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_media_kind
+    ON media_metadata(media_kind);
+
+CREATE TABLE IF NOT EXISTS notifications (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind        TEXT NOT NULL DEFAULT 'info',
+    title       TEXT NOT NULL,
+    message     TEXT NOT NULL DEFAULT '',
+    download_id TEXT,
+    created_at  TEXT NOT NULL,
+    read_at     TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_notifications_created
+    ON notifications(created_at);
+CREATE INDEX IF NOT EXISTS idx_notifications_unread
+    ON notifications(read_at);
+
+CREATE TABLE IF NOT EXISTS download_events (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    download_id TEXT,
+    event       TEXT NOT NULL,
+    bytes       INTEGER NOT NULL DEFAULT 0,
+    created_at  TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_download_events_created
+    ON download_events(created_at);
+CREATE INDEX IF NOT EXISTS idx_download_events_download
+    ON download_events(download_id);
+"""
+
 _DOWNLOAD_COLUMNS = (
     "id",
     "url",
@@ -152,10 +212,29 @@ _DOWNLOAD_COLUMNS = (
     "retry_count",
     "source_browser",
     "referrer",
+    "media_kind",
+    "page_url",
+    "page_title",
+    "source_domain",
+    "file_format",
+    "expected_sha256",
+    "checksum_status",
+    "integrity_verified_at",
 )
 
 # Fields that older callers may omit; their columns are NOT NULL.
-_DOWNLOAD_DEFAULTS = {"source_browser": "", "referrer": ""}
+_DOWNLOAD_DEFAULTS = {
+    "source_browser": "",
+    "referrer": "",
+    "media_kind": "",
+    "page_url": "",
+    "page_title": "",
+    "source_domain": "",
+    "file_format": "",
+    "expected_sha256": "",
+    "checksum_status": "not-requested",
+    "integrity_verified_at": "",
+}
 
 _UPSERT_DOWNLOAD = f"""
 INSERT INTO downloads ({", ".join(_DOWNLOAD_COLUMNS)})
@@ -171,18 +250,62 @@ class Database:
     def __init__(self, path: Path | None = None) -> None:
         if path is None:
             ensure_app_layout()
+        self._uses_default_path = path is None
         self.path = Path(path) if path is not None else database_file()
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.migration_backup_path: Path | None = None
         connection = sqlite3.connect(str(self.path), timeout=8)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys = ON")
         try:
+            from_version = int(
+                connection.execute("PRAGMA user_version").fetchone()[0]
+            )
+            if 0 < from_version < SCHEMA_VERSION:
+                self.migration_backup_path = self._backup_before_migration(
+                    connection, from_version
+                )
             self._migrate(connection)
         except Exception:
             connection.close()
             raise
         self._connection: sqlite3.Connection | None = connection
         logger.debug("SQLite database ready at %s", self.path)
+
+    def _backup_before_migration(
+        self, connection: sqlite3.Connection, from_version: int
+    ) -> Path:
+        """Write and verify a consistent copy before any schema change."""
+        stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        directory = (
+            database_backup_dir()
+            if self._uses_default_path
+            else self.path.parent / "backups"
+        )
+        directory.mkdir(parents=True, exist_ok=True)
+        destination = directory / (
+            f"pre-migration-v{from_version}-{stamp}.sqlite3"
+        )
+        target = sqlite3.connect(str(destination))
+        try:
+            connection.backup(target)
+            target.commit()
+            integrity = target.execute("PRAGMA integrity_check").fetchone()[0]
+            if str(integrity).casefold() != "ok":
+                raise RuntimeError(
+                    f"Pre-migration backup failed its integrity check: {integrity}"
+                )
+        except Exception:
+            target.close()
+            destination.unlink(missing_ok=True)
+            raise
+        target.close()
+        logger.info(
+            "Verified pre-migration backup of schema %s at %s",
+            from_version,
+            destination,
+        )
+        return destination
 
     # ------------------------------------------------------------------ migrations
     @staticmethod
@@ -222,6 +345,21 @@ class Database:
                 connection.commit()
                 logger.info("Migrated SQLite schema to version 3")
                 version = 3
+            if version < 4:
+                existing = {
+                    row["name"]
+                    for row in connection.execute("PRAGMA table_info(downloads)")
+                }
+                for name, declaration in _V4_DOWNLOAD_COLUMNS:
+                    if name not in existing:
+                        connection.execute(
+                            f"ALTER TABLE downloads ADD COLUMN {name} {declaration}"
+                        )
+                connection.executescript(_SCHEMA_V4)
+                connection.execute("PRAGMA user_version = 4")
+                connection.commit()
+                logger.info("Migrated SQLite schema to version 4")
+                version = 4
             if version < SCHEMA_VERSION:
                 connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
                 connection.commit()
@@ -468,6 +606,204 @@ class Database:
                 """,
                 (download_id, limit),
             ).fetchall()
+        return [dict(row) for row in rows]
+
+    # ------------------------------------------------------------------ media metadata
+    def save_media_metadata(self, download_id: str, record: dict[str, Any]) -> None:
+        connection = self._connection_or_raise()
+        now = datetime.now().isoformat(timespec="seconds")
+        duration = record.get("duration_seconds")
+        try:
+            duration_value = int(duration) if duration is not None else None
+        except (TypeError, ValueError):
+            duration_value = None
+        with connection:
+            connection.execute(
+                """
+                INSERT INTO media_metadata (
+                    download_id, media_kind, page_url, page_title, source_domain,
+                    quality_label, duration_seconds, detected_by, detected_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(download_id) DO UPDATE SET
+                    media_kind = excluded.media_kind,
+                    page_url = excluded.page_url,
+                    page_title = excluded.page_title,
+                    source_domain = excluded.source_domain,
+                    quality_label = excluded.quality_label,
+                    duration_seconds = excluded.duration_seconds,
+                    detected_by = excluded.detected_by,
+                    detected_at = excluded.detected_at
+                """,
+                (
+                    download_id,
+                    str(record.get("media_kind") or "")[:32],
+                    str(record.get("page_url") or "")[:8192],
+                    str(record.get("page_title") or "")[:1024],
+                    str(record.get("source_domain") or "")[:255],
+                    str(record.get("quality_label") or "")[:64],
+                    duration_value,
+                    str(record.get("detected_by") or "")[:64],
+                    str(record.get("detected_at") or now),
+                ),
+            )
+
+    def load_media_metadata(self, download_id: str) -> dict[str, Any] | None:
+        connection = self._connection_or_raise()
+        row = connection.execute(
+            "SELECT * FROM media_metadata WHERE download_id = ?", (download_id,)
+        ).fetchone()
+        return dict(row) if row else None
+
+    def load_all_media_metadata(self) -> dict[str, dict[str, Any]]:
+        connection = self._connection_or_raise()
+        rows = connection.execute("SELECT * FROM media_metadata").fetchall()
+        return {str(row["download_id"]): dict(row) for row in rows}
+
+    def delete_media_metadata(self, download_id: str) -> None:
+        connection = self._connection_or_raise()
+        with connection:
+            connection.execute(
+                "DELETE FROM media_metadata WHERE download_id = ?", (download_id,)
+            )
+
+    # ------------------------------------------------------------------ notifications
+    def add_notification(
+        self,
+        kind: str,
+        title: str,
+        message: str = "",
+        download_id: str | None = None,
+    ) -> int:
+        connection = self._connection_or_raise()
+        with connection:
+            cursor = connection.execute(
+                """
+                INSERT INTO notifications (kind, title, message, download_id, created_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    str(kind or "info")[:32],
+                    str(title or "")[:255],
+                    str(message or "")[:2000],
+                    download_id,
+                    datetime.now().isoformat(timespec="seconds"),
+                ),
+            )
+        return int(cursor.lastrowid or 0)
+
+    def load_notifications(
+        self, limit: int = 100, unread_only: bool = False
+    ) -> list[dict[str, Any]]:
+        connection = self._connection_or_raise()
+        limit = max(1, min(int(limit), 1000))
+        query = "SELECT * FROM notifications"
+        if unread_only:
+            query += " WHERE read_at IS NULL"
+        query += " ORDER BY id DESC LIMIT ?"
+        rows = connection.execute(query, (limit,)).fetchall()
+        return [dict(row) for row in rows]
+
+    def unread_notification_count(self) -> int:
+        connection = self._connection_or_raise()
+        row = connection.execute(
+            "SELECT COUNT(*) AS count FROM notifications WHERE read_at IS NULL"
+        ).fetchone()
+        return int(row["count"]) if row else 0
+
+    def mark_notification_read(self, notification_id: int) -> None:
+        connection = self._connection_or_raise()
+        with connection:
+            connection.execute(
+                "UPDATE notifications SET read_at = ? WHERE id = ? AND read_at IS NULL",
+                (datetime.now().isoformat(timespec="seconds"), int(notification_id)),
+            )
+
+    def mark_all_notifications_read(self) -> int:
+        connection = self._connection_or_raise()
+        with connection:
+            cursor = connection.execute(
+                "UPDATE notifications SET read_at = ? WHERE read_at IS NULL",
+                (datetime.now().isoformat(timespec="seconds"),),
+            )
+        return int(cursor.rowcount or 0)
+
+    def delete_notification(self, notification_id: int) -> None:
+        connection = self._connection_or_raise()
+        with connection:
+            connection.execute(
+                "DELETE FROM notifications WHERE id = ?", (int(notification_id),)
+            )
+
+    def clear_notifications(self) -> int:
+        connection = self._connection_or_raise()
+        with connection:
+            cursor = connection.execute("DELETE FROM notifications")
+        return int(cursor.rowcount or 0)
+
+    # ------------------------------------------------------------------ analytics
+    def add_download_event(
+        self, download_id: str | None, event: str, byte_count: int = 0
+    ) -> None:
+        connection = self._connection_or_raise()
+        with connection:
+            connection.execute(
+                """
+                INSERT INTO download_events (download_id, event, bytes, created_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                (
+                    download_id,
+                    str(event or "event")[:64],
+                    max(0, int(byte_count)),
+                    datetime.now().isoformat(timespec="seconds"),
+                ),
+            )
+
+    def load_download_events(self, limit: int = 200) -> list[dict[str, Any]]:
+        connection = self._connection_or_raise()
+        limit = max(1, min(int(limit), 2000))
+        rows = connection.execute(
+            "SELECT * FROM download_events ORDER BY id DESC LIMIT ?", (limit,)
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def download_summary(self) -> dict[str, Any]:
+        connection = self._connection_or_raise()
+        row = connection.execute(
+            """
+            SELECT COUNT(*) AS total,
+                   SUM(CASE WHEN status = 'Completed' THEN 1 ELSE 0 END) AS completed,
+                   SUM(CASE WHEN status = 'Failed' THEN 1 ELSE 0 END) AS failed,
+                   SUM(CASE WHEN status IN ('Queued', 'Connecting', 'Downloading',
+                                           'Retrying', 'Pausing', 'Stopping')
+                            THEN 1 ELSE 0 END) AS active,
+                   COALESCE(SUM(CASE WHEN status = 'Completed' THEN total_bytes ELSE 0 END), 0)
+                            AS completed_bytes,
+                   MIN(created_at) AS first_at,
+                   MAX(completed_at) AS last_completed_at
+              FROM downloads
+            """
+        ).fetchone()
+        return dict(row) if row else {}
+
+    def daily_activity(self, days: int = 14) -> list[dict[str, Any]]:
+        connection = self._connection_or_raise()
+        days = max(1, min(int(days), 365))
+        rows = connection.execute(
+            """
+            SELECT substr(COALESCE(completed_at, created_at), 1, 10) AS day,
+                   COUNT(*) AS total,
+                   SUM(CASE WHEN status = 'Completed' THEN 1 ELSE 0 END) AS completed,
+                   SUM(CASE WHEN status = 'Failed' THEN 1 ELSE 0 END) AS failed,
+                   COALESCE(SUM(CASE WHEN status = 'Completed' THEN total_bytes ELSE 0 END), 0)
+                       AS bytes
+              FROM downloads
+             WHERE substr(COALESCE(completed_at, created_at), 1, 10) >= date('now', ?)
+             GROUP BY day
+             ORDER BY day
+            """,
+            (f"-{days} days",),
+        ).fetchall()
         return [dict(row) for row in rows]
 
     # ------------------------------------------------------------------ lifecycle

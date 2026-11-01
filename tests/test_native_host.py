@@ -112,6 +112,12 @@ def test_download_request_is_forwarded_and_deduplicated() -> None:
         filename="file.zip",
         total_bytes=1024,
         ask_folder=True,
+        page_url="https://example.com/page",
+        page_title="Example page",
+        media_kind="video",
+        quality_label="720p",
+        duration_seconds=42,
+        detected_by="media",
     )
     first = handler.handle(request)
     second = handler.handle(request)
@@ -124,6 +130,11 @@ def test_download_request_is_forwarded_and_deduplicated() -> None:
     assert payload["filename"] == "file.zip"
     assert payload["total_bytes"] == 1024
     assert payload["ask_folder"] is True
+    assert payload["page_title"] == "Example page"
+    assert payload["media_kind"] == "video"
+    assert payload["quality_label"] == "720p"
+    assert payload["duration_seconds"] == 42
+    assert payload["detected_by"] == "media"
     assert timeout > 0
 
 

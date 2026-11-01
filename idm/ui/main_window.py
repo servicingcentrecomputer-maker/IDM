@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMenu,
     QMessageBox,
+    QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -86,6 +87,16 @@ from .dialogs.scheduler import SchedulerDialog
 from .dialogs.update_notification import UpdateNotificationDialog
 from .update_service import config_from_settings
 from .download_view import DownloadView
+from .pages import (
+    AdvancedSettingsPage,
+    AnalyticsPage,
+    BrowserIntegrationPage,
+    DashboardPage,
+    NotificationsPage,
+    PerformancePage,
+    UpdateCenterPage,
+    VideoDownloadsPage,
+)
 from .sidebar import Sidebar
 from .status_bar import StatusBar
 from .theme import THEME_LABELS, THEME_ORDER, ThemeManager
@@ -103,6 +114,34 @@ _FILTER_TITLES = {
     "videos": "Videos",
     "programs": "Programs",
     "compressed": "Compressed Files",
+}
+
+_SECTION_TITLES = {
+    "dashboard": "Dashboard",
+    "video_downloads": "Video Downloads",
+    "browser_integration": "Browser Integration",
+    "analytics": "Download Analytics",
+    "performance": "Performance Monitor",
+    "notifications": "Notifications",
+    "update_center": "Update Center",
+    "advanced_settings": "Advanced Settings",
+}
+
+_SECTION_SUBTITLES = {
+    "dashboard": "Transfers, activity and system status at a glance.",
+    "video_downloads": (
+        "Direct media transfers you are authorised to download."
+    ),
+    "browser_integration": (
+        "Connect the IDM Video Assistant to Chrome or Edge."
+    ),
+    "analytics": "Download activity and transfer history from your local database.",
+    "performance": (
+        "Tune concurrency, connection count and the global speed limit."
+    ),
+    "notifications": "Completion, failure and update notices stored locally.",
+    "update_center": "Signed release checks, history and rollback tools.",
+    "advanced_settings": "Folders, transfers, interface and maintenance tools.",
 }
 
 _RESUMABLE_ALL = {DownloadStatus.PAUSED, DownloadStatus.STOPPED}
@@ -380,7 +419,55 @@ class MainWindow(QMainWindow):
         )
         self._download_view.table.doubleClicked.connect(self._on_double_click)
         self._download_view.add_requested.connect(self._add_download)
-        content_layout.addWidget(self._download_view, 1)
+
+        self._downloads_page = QWidget()
+        self._downloads_page.setObjectName("PageArea")
+        downloads_layout = QVBoxLayout(self._downloads_page)
+        downloads_layout.setContentsMargins(0, 0, 0, 0)
+        downloads_layout.setSpacing(0)
+        downloads_layout.addWidget(self._download_view)
+
+        self._dashboard_page = DashboardPage(
+            self._theme, self._manager, self._settings, self
+        )
+        self._video_downloads_page = VideoDownloadsPage(
+            self._theme, self._manager, self._settings, self
+        )
+        self._browser_page = BrowserIntegrationPage(
+            self._theme, self._settings, self._browser, self
+        )
+        self._analytics_page = AnalyticsPage(
+            self._theme, self._settings, self._manager, self
+        )
+        self._performance_page = PerformancePage(
+            self._theme, self._manager, self._settings, self
+        )
+        self._notifications_page = NotificationsPage(
+            self._theme, self._settings, self._manager, self
+        )
+        self._update_page = UpdateCenterPage(
+            self._theme, self._settings, self
+        )
+        self._advanced_settings_page = AdvancedSettingsPage(
+            self._theme, self._settings, self
+        )
+        self._pages = {
+            "dashboard": self._dashboard_page,
+            "video_downloads": self._video_downloads_page,
+            "browser_integration": self._browser_page,
+            "analytics": self._analytics_page,
+            "performance": self._performance_page,
+            "notifications": self._notifications_page,
+            "update_center": self._update_page,
+            "advanced_settings": self._advanced_settings_page,
+        }
+
+        self._content_stack = QStackedWidget()
+        self._content_stack.setObjectName("ContentStack")
+        self._content_stack.addWidget(self._downloads_page)
+        for key in _SECTION_TITLES:
+            self._content_stack.addWidget(self._pages[key])
+        content_layout.addWidget(self._content_stack, 1)
 
         body_layout.addWidget(content, 1)
         root.addWidget(body, 1)
@@ -430,9 +517,100 @@ class MainWindow(QMainWindow):
         self._proxy.modelReset.connect(self._refresh_page_state)
 
         self._theme.changed.connect(self._on_theme_changed)
+        self._wire_pages()
         app = QApplication.instance()
         if app is not None:
             app.aboutToQuit.connect(self._shutdown)
+
+    def _wire_pages(self) -> None:
+        dashboard = self._dashboard_page
+        dashboard.add_requested.connect(self._add_download)
+        dashboard.navigate_requested.connect(self._navigate_to)
+        dashboard.item_activated.connect(self._open_download_item)
+
+        videos = self._video_downloads_page
+        videos.add_requested.connect(self._add_video_download)
+        videos.guide_requested.connect(self._show_media_policy)
+        videos.item_activated.connect(self._open_download_item)
+        videos.message.connect(self._status_bar.show_message)
+
+        browser = self._browser_page
+        browser.message.connect(self._status_bar.show_message)
+        browser.guide_requested.connect(self._show_browser_guide)
+
+        performance = self._performance_page
+        performance.message.connect(self._status_bar.show_message)
+        performance.settings_applied.connect(self._on_page_settings_applied)
+        performance.options_requested.connect(lambda: self._open_options(3))
+
+        notifications = self._notifications_page
+        notifications.item_requested.connect(self._open_download_item)
+        notifications.message.connect(self._status_bar.show_message)
+
+        update_page = self._update_page
+        update_page.check_requested.connect(lambda: self._show_about(check=True))
+        update_page.options_requested.connect(lambda: self._open_options(6))
+        update_page.message.connect(self._status_bar.show_message)
+
+        settings_page = self._advanced_settings_page
+        settings_page.settings_applied.connect(self._on_page_settings_applied)
+        settings_page.options_requested.connect(self._open_options)
+        settings_page.import_requested.connect(self._import_downloads)
+        settings_page.export_requested.connect(self._export_downloads)
+        settings_page.scheduler_requested.connect(self._open_scheduler)
+        settings_page.queue_requested.connect(self._open_queue)
+        settings_page.message.connect(self._status_bar.show_message)
+
+    def _on_page_settings_applied(self) -> None:
+        self._manager.apply_settings()
+        self._theme.set_mode(self._settings.theme)
+        self._apply_view_settings()
+        self._update_actions()
+
+    # ------------------------------------------------------------------ navigation
+    def _navigate_to(self, key: str) -> None:
+        if key not in self._pages and key not in _FILTER_TITLES:
+            return
+        self._sidebar.select(key)
+        self._on_filter_changed(key)
+
+    def _open_download_item(self, download_id: str) -> None:
+        item = self._manager.get(download_id)
+        if item is None:
+            self._status_bar.show_message(
+                "That download is no longer in the list."
+            )
+            return
+        self._sidebar.select("all")
+        self._on_filter_changed("all")
+        self._select_item(download_id)
+        self._show_progress(item)
+
+    def _show_media_policy(self) -> None:
+        QMessageBox.information(
+            self,
+            "Supported media downloads",
+            "IDM downloads direct media files over HTTP or HTTPS — for example "
+            "MP4 and WebM links you are authorised to transfer.\n\n"
+            "IDM does not bypass DRM or access controls, decrypt signatures, or "
+            "extract protected streams. When a streaming platform page is pasted, "
+            "IDM opens the official page so you can use the options that platform "
+            "provides.",
+        )
+
+    def _show_browser_guide(self) -> None:
+        guide = Path(__file__).resolve().parents[2] / "BrowserIntegrationGuide.md"
+        if guide.is_file():
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(guide)))
+            return
+        QMessageBox.information(
+            self,
+            "Browser integration",
+            "Install the IDM native messaging host from this page, then load the "
+            "unpacked extension from BrowserExtension/IDMVideoAssistant in "
+            "chrome://extensions (Developer mode) or edge://extensions.\n\n"
+            "IDM never installs a browser extension silently.",
+        )
 
     def _install_shortcuts(self) -> None:
         delete_shortcut = QShortcut(
@@ -526,7 +704,15 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------------------------ actions
     def _add_download(self) -> None:
-        dialog = AddDownloadDialog(self._settings, self._theme, self)
+        self._open_add_dialog(None)
+
+    def _add_video_download(self) -> None:
+        self._open_add_dialog("Videos")
+
+    def _open_add_dialog(self, category: str | None) -> None:
+        dialog = AddDownloadDialog(
+            self._settings, self._theme, self, initial_category=category
+        )
         try:
             if dialog.exec() != AddDownloadDialog.DialogCode.Accepted:
                 return
@@ -1394,9 +1580,21 @@ class MainWindow(QMainWindow):
 
     def _refresh_page_state(self, *_args) -> None:
         key = self._sidebar.current_key
+        items = self._manager.items()
+        page = self._pages.get(key)
+        if page is not None:
+            self._page_title.setText(_SECTION_TITLES[key])
+            self._page_subtitle.setText(_SECTION_SUBTITLES[key])
+            self._search.setVisible(False)
+            self._content_stack.setCurrentWidget(page)
+            self._refresh_sidebar_counts(items)
+            self._update_actions()
+            return
+
+        self._search.setVisible(True)
+        self._content_stack.setCurrentWidget(self._downloads_page)
         self._page_title.setText(_FILTER_TITLES.get(key, "All Downloads"))
         visible = self._proxy.rowCount()
-        items = self._manager.items()
         total = len(items)
         search = self._search.text().strip()
         active = self._manager.active_count
@@ -1450,8 +1648,23 @@ class MainWindow(QMainWindow):
         else:
             self._download_view.show_empty(False)
 
-        self._sidebar.set_counts(_sidebar_counts(items))
+        self._refresh_sidebar_counts(items)
         self._update_actions()
+
+    def _refresh_sidebar_counts(self, items: list[DownloadItem]) -> None:
+        self._sidebar.set_counts(
+            _sidebar_counts(items, self._unread_notifications())
+        )
+
+    def _refresh_sidebar_badges(self) -> None:
+        self._refresh_sidebar_counts(self._manager.items())
+
+    def _unread_notifications(self) -> int:
+        try:
+            return int(self._settings.database.unread_notification_count())
+        except Exception:
+            logger.debug("Could not read unread notifications", exc_info=True)
+            return 0
 
     # ------------------------------------------------------------------ manager events
     def _on_manager_changed(self, *_args) -> None:
@@ -1634,9 +1847,12 @@ class MainWindow(QMainWindow):
         self._manager.shutdown()
 
 
-def _sidebar_counts(items: list[DownloadItem]) -> dict[str, int]:
+def _sidebar_counts(
+    items: list[DownloadItem], unread_notifications: int = 0
+) -> dict[str, int]:
     counts = {
         "all": len(items),
+        "video_downloads": 0,
         "downloading": 0,
         "completed": 0,
         "documents": 0,
@@ -1645,8 +1861,11 @@ def _sidebar_counts(items: list[DownloadItem]) -> dict[str, int]:
         "programs": 0,
         "compressed": 0,
         "other": 0,
+        "notifications": max(0, int(unread_notifications)),
     }
     for item in items:
+        if item.is_video:
+            counts["video_downloads"] += 1
         if item.is_in_progress:
             counts["downloading"] += 1
         if item.status == DownloadStatus.COMPLETED:

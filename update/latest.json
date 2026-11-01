@@ -1,19 +1,19 @@
 {
   "app_name": "IDM",
   "channel": "stable",
-  "latest_version": "2.0.1",
+  "latest_version": "3.0.0",
   "minimum_supported_version": "1.0.0",
   "release_date": "2026-11-01",
   "release_notes": [
-    "Update endpoint configured: Check for Updates now reads the signed manifest from GitHub.",
-    "Every update manifest is verified with an embedded Ed25519 public key.",
-    "Unsigned builds offer Download Installer in the browser instead of automatic installation.",
-    "Clearer security messaging when a trusted code-signing certificate is required.",
-    "Application, updater, native host, installer and browser extensions report 2.0.1."
+    "Next-generation interface with Dashboard, Video Downloads, Browser Integration, Analytics, Performance, Advanced Settings, Update Center and Notifications.",
+    "New IDM Video Assistant extension for Chrome and Edge that sends supported direct media links to IDM.",
+    "Native messaging protocol v2 with validated media metadata and a signed-in installer upgrade path.",
+    "Database schema v4 with verified pre-migration backups; existing history, settings, queue and paths are preserved.",
+    "Installer registers browser integration without silently installing extensions and keeps user data during in-place upgrades."
   ],
-  "download_url": "https://github.com/servicingcentrecomputer-maker/IDM/releases/download/v2.0.1/IDM_Setup_2.0.1.exe",
-  "sha256": "907dbda971597fe372679f6ba7bbbddd90ab5c2f97371436bd8673eaece3f9bd",
-  "package_size": 61961926,
+  "download_url": "https://github.com/servicingcentrecomputer-maker/IDM/releases/download/v3.0.0/IDM-Setup-3.0.0.exe",
+  "sha256": "1f5e658cf2806d960bd6e6a5d2ff1ea514e329b152d964c825f802fcd1198762",
+  "package_size": 62115643,
   "mandatory": false,
-  "manifest_signature": "d8z5HSkAKk5QPgUrITa/8TVvj3SjuMM4H564E/6NOhdQBpY3ZZQoFYuDl7+19Ldefz+tUO1/CSUiGcDEiWotCw=="
+  "manifest_signature": "2oGdD6wu0a+/+fIARM9mGhto8t8xIsWY+SrLy2RHvuM3SIgeggupUKFXgSy4kpCRS3SaIY6DUXZgk5WmQdYABg=="
 }

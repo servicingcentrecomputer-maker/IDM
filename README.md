@@ -6,8 +6,12 @@ layout while using an original icon set, an SQLite-backed history, a real HTTP
 download engine, pause/resume with HTTP Range, a queue, schedules and three
 interface themes.
 
-The current build contains the complete application shell, the multi-connection
-segmented download engine and a full UI redesign. The engine supports HTTP
+The current build is Version 3.0.0. It adds a multi-page workspace with
+Dashboard, Video Downloads, All Downloads, Browser Integration, Download
+Analytics, Performance Monitor, Advanced Settings, Update Center and
+Notifications, plus light and dark themes. The complete application shell, the
+multi-connection segmented download engine and the redesigned interface are
+included. The engine supports HTTP
 Range transfers over up to 16 parallel connections, resumable segmented
 downloads that survive a restart, automatic retry, global and per-download
 speed limits, and a persistent queue. Servers that do not support Range fall
@@ -44,9 +48,9 @@ available for testing on this machine.
 A packaged build is produced by the build automation:
 
 - Application: `dist\IDM\IDM.exe`
-- Installer: `dist-installer\IDM_Setup.exe`
+- Installer: `dist-installer\IDM-Setup-3.0.0.exe`
 
-Run `IDM_Setup.exe` to install IDM, create shortcuts, optionally start it with
+Run `IDM-Setup-3.0.0.exe` to install IDM, create shortcuts, optionally start it with
 Windows, and register it in Add/Remove Programs. The browser integration page
 offers one optional task per detected browser; selecting it registers the
 native messaging host for the current user. Extension ZIP packages are shipped
@@ -60,6 +64,13 @@ IDs and store publishing are covered in
 [docs/BROWSER_STORE_PUBLISHING.md](docs/BROWSER_STORE_PUBLISHING.md).
 
 ### Release package
+
+The 3.0.0 deliverables are assembled in `IDM_V3_Release\`: the portable
+application (`IDM.exe` with `_internal\`, `IDM_Updater.exe` and
+`IDM_NativeHost.exe`), `IDM-Setup-3.0.0.exe`, the unpacked
+`BrowserExtension\IDMVideoAssistant\`, and the release, changelog,
+installation, browser integration and update guides with `Checksums.txt`.
+Source remains editable in the repository root.
 
 `build_windows.ps1 -Package` assembles `release\IDM-<version>-win64\` and a
 matching ZIP after a successful build. The bundle contains the installer, the
@@ -149,6 +160,30 @@ extension IDs, limitations and a manual verification checklist are in
 [docs/BROWSER_INTEGRATION.md](docs/BROWSER_INTEGRATION.md). Store submission is
 documented in
 [docs/BROWSER_STORE_PUBLISHING.md](docs/BROWSER_STORE_PUBLISHING.md).
+
+### IDM Video Assistant
+
+`BrowserExtension\IDMVideoAssistant\` contains a separate Manifest V3 extension
+for Chrome and Edge that adds page-side media detection. It shares the pinned
+extension ID and the `com.idm.native` host with the basic integration, so use one
+of them per browser profile. It lists direct HTTP(S) media links and observable
+HTML5 media sources, sends a selected link to IDM, and recognises YouTube and
+YouTube Music pages. YouTube pages show only Google's official options
+(Premium offline downloads, Studio creator downloads and the YouTube Help page);
+no protected stream, `googlevideo.com` URL or signature data is extracted or
+downloaded.
+
+Install it from the unpacked folder, or build its ZIP package:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\package_video_assistant.py
+# dist-extensions\IDM_Video_Assistant_3.0.0.zip, no CRX
+```
+
+Its [README](BrowserExtension/IDMVideoAssistant/README.md) and
+[InstallationGuide](BrowserExtension/IDMVideoAssistant/InstallationGuide.md)
+cover permissions, Chrome/Edge loading, native-host registration and the manual
+verification checklist.
 
 Known platform limits: POST form downloads, Blob/MediaSource streams, browser-
 internal saves and authenticated sessions that require browser cookies are not

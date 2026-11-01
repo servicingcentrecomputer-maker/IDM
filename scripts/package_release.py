@@ -1,8 +1,8 @@
-"""Assemble a distributable Windows release package for IDM.
+r"""Assemble a distributable Windows release package for IDM.
 
 The package is built from the artifacts produced by ``build_windows.ps1``::
 
-    dist-installer\\IDM_Setup.exe
+    dist-installer\IDM-Setup-<version>.exe
     dist\\IDM\\                  (portable application)
     dist-extensions\\*.zip      (browser extension packages)
 
@@ -10,7 +10,7 @@ It validates that the application, installer and extension versions agree,
 then writes a versioned directory and a deterministic ZIP::
 
     release\\IDM-<version>-win64\\
-        IDM_Setup_<version>.exe
+        IDM-Setup-<version>.exe
         portable\\IDM\\...
         browser-extensions\\...
         docs\\...
@@ -143,6 +143,15 @@ def validate_versions(root: Path, version: str) -> None:
             f"{manifest.get('version')!r} does not match {version}.",
         )
 
+    video_manifest = root / "BrowserExtension" / "IDMVideoAssistant" / "manifest.json"
+    require(video_manifest.is_file(), f"Missing extension manifest: {video_manifest}")
+    manifest = json.loads(video_manifest.read_text(encoding="utf-8"))
+    require(
+        manifest.get("version") == version,
+        f"BrowserExtension/IDMVideoAssistant/manifest.json version "
+        f"{manifest.get('version')!r} does not match {version}.",
+    )
+
 
 def validate_extension_packages(src_dir: Path, version: str) -> list[dict]:
     results = []
@@ -241,11 +250,12 @@ def write_readme(package_dir: Path, version: str, include_installer: bool, inclu
         "--------",
     ]
     if include_installer:
-        lines.append(f"  {'IDM_Setup_' + version + '.exe':<30}Installer")
+        lines.append(f"  {'IDM-Setup-' + version + '.exe':<30}Installer")
     if include_portable:
         lines.append(f"  {'portable\\IDM\\IDM.exe':<30}Portable application")
     lines += [
         f"  {'browser-extensions\\':<30}Chrome, Edge and Firefox packages",
+        f"  {'BrowserExtension\\IDMVideoAssistant\\':<30}Unpacked IDM Video Assistant",
         f"  {'docs\\':<30}Full documentation",
         f"  {'RELEASE_NOTES.md':<30}What changed in this release",
         f"  {'VERSION.json':<30}Component versions and build metadata",
@@ -257,7 +267,7 @@ def write_readme(package_dir: Path, version: str, include_installer: bool, inclu
     if include_installer:
         lines += [
             f"1. Verify the installer against SHA256SUMS.txt.",
-            f"2. Run IDM_Setup_{version}.exe.",
+            f"2. Run IDM-Setup-{version}.exe.",
             "3. Optionally select the browser-integration tasks for your browsers.",
         ]
     else:
@@ -266,7 +276,7 @@ def write_readme(package_dir: Path, version: str, include_installer: bool, inclu
         "",
         "Verify",
         "------",
-        "  certutil -hashfile IDM_Setup_" + version + ".exe SHA256",
+        "  certutil -hashfile IDM-Setup-" + version + ".exe SHA256",
         "Compare the digest with the matching line in SHA256SUMS.txt.",
         "",
         "Notes",
@@ -330,7 +340,7 @@ def build_release(
     validate_versions(root, version)
 
     dist_dir = root / "dist"
-    installer = root / "dist-installer" / "IDM_Setup.exe"
+    installer = root / "dist-installer" / f"IDM-Setup-{version}.exe"
     portable_dir = dist_dir / "IDM"
     extensions_dir = root / "dist-extensions"
 
@@ -381,7 +391,7 @@ def build_release(
     components: dict[str, object] = {}
 
     if include_installer:
-        target = package_dir / f"IDM_Setup_{version}.exe"
+        target = package_dir / f"IDM-Setup-{version}.exe"
         shutil.copy2(installer, target)
         components["installer"] = {
             "file": target.name,
@@ -416,6 +426,15 @@ def build_release(
             "sha256": item["sha256"],
         }
         for item in extensions
+    }
+
+    video_source = root / "BrowserExtension" / "IDMVideoAssistant"
+    video_target = package_dir / "BrowserExtension" / "IDMVideoAssistant"
+    shutil.copytree(video_source, video_target)
+    components["video_extension"] = {
+        "directory": video_target.relative_to(package_dir).as_posix(),
+        "version": version,
+        "files": directory_stats(video_target)[0],
     }
 
     copy_documents(root, package_dir)
@@ -480,7 +499,7 @@ def main(argv: list[str] | None = None) -> int:
         help="Where the release directory and ZIP are written (default: release).",
     )
     parser.add_argument("--version", default=None, help="Expected version; must match idm/version.py.")
-    parser.add_argument("--no-installer", action="store_true", help="Omit IDM_Setup.exe.")
+    parser.add_argument("--no-installer", action="store_true", help="Omit the installer.")
     parser.add_argument("--no-portable", action="store_true", help="Omit the portable application.")
     parser.add_argument("--no-zip", action="store_true", help="Write the directory without the ZIP archive.")
     parser.add_argument("--force", action="store_true", help="Replace an unrecognised existing package directory.")

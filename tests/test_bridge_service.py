@@ -135,6 +135,79 @@ def test_download_is_added_with_browser_metadata(service, settings, manager) -> 
     assert item.referrer == "https://example.com/page"
 
 
+def test_media_request_keeps_observed_metadata(
+    service, settings, manager
+) -> None:
+    response = _call(
+        service,
+        _request(
+            type="request_download",
+            url="https://cdn.example.com/stream/abc123",
+            filename="clip.mp4",
+            mime="video/mp4",
+            page_url="https://example.com/library",
+            page_title="Library clip",
+            media_kind="video",
+            quality_label="720p",
+            duration_seconds=93,
+            detected_by="media",
+        ),
+    )
+    assert response["ok"] is True
+    download = response["download"]
+    assert download["media_kind"] == "video"
+    assert download["page_title"] == "Library clip"
+    assert download["source_domain"] == "cdn.example.com"
+    assert download["file_format"] == "mp4"
+
+    item = manager.get(download["id"])
+    assert item is not None
+    assert item.media_kind == "video"
+    assert item.page_url == "https://example.com/library"
+    assert item.page_title == "Library clip"
+    assert item.source_domain == "cdn.example.com"
+    assert item.file_format == "mp4"
+
+    stored = settings.database.load_media_metadata(item.id)
+    assert stored is not None
+    assert stored["quality_label"] == "720p"
+    assert stored["duration_seconds"] == 93
+    assert stored["detected_by"] == "media"
+
+
+def test_media_kind_hint_does_not_relabel_plain_files(service, manager) -> None:
+    response = _call(
+        service,
+        _request(
+            type="request_download",
+            url="https://example.com/setup.zip",
+            filename="setup.zip",
+            media_kind="video",
+        ),
+    )
+    assert response["ok"] is True
+    item = manager.get(response["download"]["id"])
+    assert item is not None
+    assert item.media_kind == ""
+
+
+def test_media_kind_hint_fills_an_unclassifiable_stream(service, manager) -> None:
+    response = _call(
+        service,
+        _request(
+            type="request_download",
+            url="https://cdn.example.com/stream/abc123",
+            filename="abc123",
+            media_kind="audio",
+            detected_by="media",
+        ),
+    )
+    assert response["ok"] is True
+    item = manager.get(response["download"]["id"])
+    assert item is not None
+    assert item.media_kind == "audio"
+
+
 def test_repeated_request_id_returns_the_cached_response(
     service, settings, manager
 ) -> None:

@@ -105,11 +105,13 @@ class TestHandler(BaseHTTPRequestHandler):
             "disposition",
             "flaky",
             "ratelimit",
+            "media",
         }:
             self._error(404, "Unknown route")
             return
 
         supports_range = route not in {"norange", "slow-norange"}
+        content_type = "video/mp4" if route == "media" else "application/octet-stream"
         data = payload(size)
         start = 0
         end = size - 1
@@ -137,7 +139,7 @@ class TestHandler(BaseHTTPRequestHandler):
 
         body = data[start : end + 1]
         self.send_response(206 if partial else 200)
-        self.send_header("Content-Type", "application/octet-stream")
+        self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
         if supports_range:
             self.send_header("Accept-Ranges", "bytes")

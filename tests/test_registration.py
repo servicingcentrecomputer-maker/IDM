@@ -12,6 +12,7 @@ from integrations.browser_registry import (
     CHROME_EXTENSION_ID,
     FIREFOX_EXTENSION_ID,
     NATIVE_HOST_NAME as REGISTRY_HOST_NAME,
+    native_manifest,
 )
 
 
@@ -236,6 +237,65 @@ def test_find_host_path_prefers_the_built_layout(
     built.parent.mkdir(parents=True)
     built.write_bytes(b"host")
     assert registration.find_host_path(root) == built
+
+
+def test_installed_layout_registration_is_detected_and_reused(
+    fake_registry, tmp_path: Path, monkeypatch
+) -> None:
+    install = tmp_path / "Programs" / "IDM"
+    host = install / "IDM_NativeHost.exe"
+    host.parent.mkdir(parents=True)
+    host.write_bytes(b"host")
+
+    monkeypatch.setattr(registration, "installed_root", lambda: install)
+    manifest_path = registration.installed_manifest_file("chrome")
+    assert manifest_path is not None
+    manifest_path.parent.mkdir(parents=True)
+    manifest_path.write_text(
+        json.dumps(native_manifest("chrome", host)), encoding="utf-8"
+    )
+
+    values = fake_registry.values
+    key = (registration.registry_subkey("chrome"), fake_registry.KEY_WOW64_64KEY)
+    fake_registry.keys.add(key)
+    fake_registry.keys.add(
+        (registration.registry_subkey("chrome"), fake_registry.KEY_WOW64_32KEY)
+    )
+    values[key] = str(manifest_path)
+    values[(registration.registry_subkey("chrome"), fake_registry.KEY_WOW64_32KEY)] = (
+        str(manifest_path)
+    )
+
+    status = registration.browser_status("chrome")
+    assert status["installed"] is True
+    assert Path(status["manifest"]) == manifest_path
+    assert status["registered_views"] == ["64", "32"]
+    assert status["problems"] == []
+
+    result = registration.install_browser("chrome", host)
+    assert Path(result["manifest"]) == manifest_path
+    assert not registration.manifest_file("chrome").exists()
+
+    removed = registration.uninstall_browser("chrome")
+    assert removed["ok"] is True
+    assert manifest_path.is_file()
+    assert fake_registry.values == {}
+
+
+def test_extension_dir_and_frozen_host_path(
+    tmp_path: Path, monkeypatch
+) -> None:
+    install = tmp_path / "Programs" / "IDM"
+    extension = install / "BrowserExtension" / "IDMVideoAssistant"
+    extension.mkdir(parents=True)
+    (extension / "manifest.json").write_text("{}", encoding="utf-8")
+    host = install / "IDM_NativeHost.exe"
+    host.write_bytes(b"host")
+    monkeypatch.setattr(registration, "installed_root", lambda: install)
+    monkeypatch.delenv("LOCALAPPDATA", raising=False)
+
+    assert registration.extension_dir() == extension
+    assert registration.find_host_path(tmp_path / "project") == host
 
 
 def test_dev_launcher_points_at_the_checkout(fake_registry, tmp_path) -> None:

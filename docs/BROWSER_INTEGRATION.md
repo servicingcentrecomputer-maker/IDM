@@ -21,6 +21,23 @@ download is resumed so the user still gets the file.
 | Chrome extension | `extensions/chrome/` | Manifest V3 service worker, popup and context menu |
 | Edge extension | `extensions/edge/` | Manifest V3; same key and extension ID as Chrome |
 | Firefox extension | `extensions/firefox/` | Manifest V2 persistent background page with a stable Gecko ID |
+| IDM Video Assistant | `BrowserExtension/IDMVideoAssistant/` | Separate MV3 Chrome/Edge extension for direct media detection with the same native host |
+
+### IDM Video Assistant
+
+`BrowserExtension/IDMVideoAssistant/` is an optional, separate Manifest V3
+extension for Chrome and Edge. It adds page-side detection of direct HTTP(S)
+media links and observable HTML5 media sources, a media list with **Send to
+IDM**, and official-options cards for YouTube and YouTube Music. It shares the
+pinned extension ID and `com.idm.native` allowlist with the basic extension, so
+use one of them per browser profile.
+
+It does not extract protected streams or `googlevideo.com` URLs, and YouTube
+pages only offer Google's official Premium, Studio and Help options. Load it
+with **Load unpacked** and see
+`BrowserExtension/IDMVideoAssistant/InstallationGuide.md` for the full setup and
+verification procedure. Its plain ZIP package is built by
+`scripts/package_video_assistant.py`; no CRX is produced.
 
 The native host is a separate executable built without PySide6. It only speaks
 the four-byte little-endian length-prefixed JSON protocol on stdin/stdout; all
@@ -31,7 +48,7 @@ stderr.
 
 ### Normal installation
 
-`IDM_Setup.exe` copies `IDM_NativeHost.exe` next to `IDM.exe` and offers one
+`IDM-Setup-3.0.0.exe` copies `IDM_NativeHost.exe` next to `IDM.exe` and offers one
 optional task per browser:
 
 - **Integrate with Google Chrome**
@@ -216,7 +233,10 @@ path the extension uses.
 - No DRM, paywall, login or access-control bypass is implemented.
 - The extension requests only `nativeMessaging`, `downloads`, `contextMenus`
   or `menus`, and `storage`. It has no content scripts, host permissions,
-  `webRequest`, `tabs` or cookie access.
+  `webRequest`, `tabs` or cookie access. The separate IDM Video Assistant adds
+  `activeTab` and its declared HTTP(S) content scripts for page media detection;
+  it still has no `tabs`, `history`, `cookies`, `webRequest` or
+  `host_permissions`.
 
 ## Browser limitations
 

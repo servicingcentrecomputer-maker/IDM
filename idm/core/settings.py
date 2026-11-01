@@ -35,6 +35,7 @@ _DEFAULTS: dict[str, Any] = {
     "connections_per_download": 12,
     "auto_retry": True,
     "max_retries": 3,
+    "auto_resume_on_network": True,
     "speed_limit_kbps": 0,
     "confirm_delete": True,
     "start_immediately": True,
@@ -83,6 +84,7 @@ class AppSettings:
         self.connections_per_download: int = _DEFAULTS["connections_per_download"]
         self.auto_retry: bool = _DEFAULTS["auto_retry"]
         self.max_retries: int = _DEFAULTS["max_retries"]
+        self.auto_resume_on_network: bool = _DEFAULTS["auto_resume_on_network"]
         self.speed_limit_kbps: int = _DEFAULTS["speed_limit_kbps"]
         self.confirm_delete: bool = _DEFAULTS["confirm_delete"]
         self.start_immediately: bool = _DEFAULTS["start_immediately"]
@@ -151,6 +153,12 @@ class AppSettings:
             _DEFAULTS["max_retries"],
             0,
             10,
+        )
+        self.auto_resume_on_network = _coerce_bool(
+            values.get(
+                "auto_resume_on_network", _DEFAULTS["auto_resume_on_network"]
+            ),
+            _DEFAULTS["auto_resume_on_network"],
         )
         self.speed_limit_kbps = _coerce_int(
             values.get("speed_limit_kbps", _DEFAULTS["speed_limit_kbps"]),
@@ -277,6 +285,8 @@ class AppSettings:
             self.max_retries = _coerce_int(
                 values["max_retries"], self.max_retries, 0, 10
             )
+        if "auto_resume_on_network" in values:
+            self.auto_resume_on_network = bool(values["auto_resume_on_network"])
         if "speed_limit_kbps" in values:
             self.speed_limit_kbps = _coerce_int(
                 values["speed_limit_kbps"],
@@ -350,6 +360,7 @@ class AppSettings:
             "connections_per_download": self.connections_per_download,
             "auto_retry": self.auto_retry,
             "max_retries": self.max_retries,
+            "auto_resume_on_network": self.auto_resume_on_network,
             "speed_limit_kbps": self.speed_limit_kbps,
             "confirm_delete": self.confirm_delete,
             "start_immediately": self.start_immediately,

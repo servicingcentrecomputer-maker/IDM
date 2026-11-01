@@ -35,6 +35,7 @@ datas = [(str(ROOT / "assets"), "assets")]
 hiddenimports = [
     "PySide6.QtSvg",
     *collect_submodules("idm"),
+    *collect_submodules("integrations"),
 ]
 
 # Modules that are never imported by IDM.  Excluding them keeps the bundle

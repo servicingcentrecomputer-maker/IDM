@@ -11,6 +11,14 @@ from pathlib import Path
 from PySide6.QtCore import QObject, QTimer, Signal
 
 from ..constants import PRIORITY_HIGH, PRIORITY_LOW
+from ..core.media import (
+    format_for,
+    media_kind_for,
+    media_metadata,
+    normalize_sha256,
+    source_domain,
+)
+from ..core.network_monitor import NetworkMonitor
 from ..core.paths import ensure_download_dir
 from ..core.settings import AppSettings
 from ..core.url_utils import (
@@ -29,6 +37,25 @@ from .speed_limiter import SpeedLimiter
 from .worker import DownloadWorker
 
 logger = logging.getLogger(__name__)
+
+_NETWORK_WAIT_MESSAGE = "Waiting for the network connection to come back."
+_NETWORK_RETRY_INTERVAL_MS = 30_000
+_NETWORK_FAILURE_HINTS = (
+    "network error",
+    "network is unreachable",
+    "timed out",
+    "timeout",
+    "connection was interrupted",
+    "connection closed",
+    "connection reset",
+    "connection aborted",
+    "remote end closed",
+    "temporarily unavailable",
+    "name resolution",
+    "getaddrinfo",
+    "no route to host",
+    "server disconnected",
+)
 
 
 class DownloadManager(QObject):
@@ -54,15 +81,28 @@ class DownloadManager(QObject):
         )
         self._auto_retry = settings.auto_retry
         self._max_retries = settings.max_retries
+        self._auto_resume_on_network = bool(
+            getattr(settings, "auto_resume_on_network", True)
+        )
         self._shutting_down = False
         self._last_stats: tuple[int, float, int] | None = None
         self._store = getattr(settings, "database", None)
         self._dirty: set[str] = set()
         self._queue_dirty = False
         self._segment_persist_at: dict[str, float] = {}
+        self._network_waiting: set[str] = set()
 
         if getattr(settings, "restore_session", True):
             self._restore_downloads()
+
+        self._network_monitor = NetworkMonitor(self)
+        self._network_monitor.online_changed.connect(self._on_network_changed)
+        self._network_retry_timer = QTimer(self)
+        self._network_retry_timer.setSingleShot(True)
+        self._network_retry_timer.setInterval(_NETWORK_RETRY_INTERVAL_MS)
+        self._network_retry_timer.timeout.connect(self._retry_network_waiting)
+        if self._network_waiting:
+            QTimer.singleShot(1500, self._retry_network_waiting)
 
         self.queue_changed.connect(self._on_queue_changed)
 
@@ -108,6 +148,13 @@ class DownloadManager(QObject):
     def total_speed(self) -> float:
         return sum(item.speed for item in self._items.values() if item.is_active)
 
+    def video_items(self) -> list[DownloadItem]:
+        return [item for item in self.items() if item.is_video]
+
+    @property
+    def media_active_count(self) -> int:
+        return sum(1 for item in self._items.values() if item.is_video and item.is_active)
+
     # ------------------------------------------------------------------ persistence
     def _restore_downloads(self) -> None:
         if self._store is None:
@@ -151,9 +198,35 @@ class DownloadManager(QObject):
                     logger.debug("Could not inspect %s", item.part_path, exc_info=True)
             self._items[item.id] = item
             self._order.append(item.id)
+            if item.status == DownloadStatus.PAUSED and item.error == _NETWORK_WAIT_MESSAGE:
+                self._network_waiting.add(item.id)
             restored += 1
         if restored:
+            self._restore_media_metadata()
             logger.info("Restored %d downloads from the database", restored)
+
+    def _restore_media_metadata(self) -> None:
+        if self._store is None:
+            return
+        try:
+            metadata = self._store.load_all_media_metadata()
+        except Exception:
+            logger.debug("Could not restore media metadata", exc_info=True)
+            return
+        for download_id, record in metadata.items():
+            item = self._items.get(download_id)
+            if item is None:
+                continue
+            if not item.media_kind:
+                item.media_kind = str(record.get("media_kind") or "")
+            if not item.page_url:
+                item.page_url = str(record.get("page_url") or "")
+            if not item.page_title:
+                item.page_title = str(record.get("page_title") or "")
+            if not item.source_domain:
+                item.source_domain = str(record.get("source_domain") or "")
+            if not item.file_format:
+                item.file_format = format_for(item.content_type, item.filename)
 
     def _record_for(self, item: DownloadItem) -> dict:
         return {
@@ -192,6 +265,14 @@ class DownloadManager(QObject):
             "etag": item.etag,
             "last_modified": item.last_modified,
             "retry_count": int(item.retry_count),
+            "media_kind": item.media_kind,
+            "page_url": item.page_url,
+            "page_title": item.page_title,
+            "source_domain": item.source_domain,
+            "file_format": item.file_format,
+            "expected_sha256": item.expected_sha256,
+            "checksum_status": item.checksum_status,
+            "integrity_verified_at": item.integrity_verified_at,
         }
 
     def _save_item(self, item: DownloadItem) -> None:
@@ -210,6 +291,43 @@ class DownloadManager(QObject):
             self._store.add_download_log(item.id, level, message)
         except Exception:
             logger.debug("Could not write the download log", exc_info=True)
+
+    def _save_media(self, item: DownloadItem, metadata: dict | None = None) -> None:
+        if self._store is None or not item.media_kind:
+            return
+        record = metadata or {
+            "media_kind": item.media_kind,
+            "page_url": item.page_url,
+            "page_title": item.page_title,
+            "source_domain": item.source_domain,
+            "file_format": item.file_format,
+        }
+        try:
+            self._store.save_media_metadata(item.id, record)
+        except Exception:
+            logger.debug("Could not save media metadata", exc_info=True)
+
+    def _event(self, download_id: str | None, event: str, byte_count: int = 0) -> None:
+        if self._store is None:
+            return
+        try:
+            self._store.add_download_event(download_id, event, byte_count)
+        except Exception:
+            logger.debug("Could not record download event", exc_info=True)
+
+    def _notify(
+        self,
+        kind: str,
+        title: str,
+        message: str,
+        download_id: str | None = None,
+    ) -> None:
+        if self._store is None:
+            return
+        try:
+            self._store.add_notification(kind, title, message, download_id)
+        except Exception:
+            logger.debug("Could not record notification", exc_info=True)
 
     def _on_queue_changed(self) -> None:
         if self._store is not None:
@@ -262,6 +380,14 @@ class DownloadManager(QObject):
         speed_limit_kbps: int = 0,
         source_browser: str = "",
         referrer: str = "",
+        page_url: str = "",
+        page_title: str = "",
+        quality_label: str = "",
+        duration_seconds: int | None = None,
+        detected_by: str = "",
+        expected_sha256: str = "",
+        content_type: str = "",
+        media_kind_hint: str = "",
     ) -> DownloadItem:
         normalized_url = validate_url(url)
         try:
@@ -285,6 +411,17 @@ class DownloadManager(QObject):
         }
         unique_name = unique_filename(folder_path, safe_name, reserved=reserved)
         category = category or category_for_filename(unique_name)
+        metadata = media_metadata(
+            url=normalized_url,
+            filename=unique_name,
+            content_type=content_type,
+            page_url=str(page_url or "")[:8192],
+            page_title=str(page_title or "")[:1024],
+            quality_label=str(quality_label or "")[:64],
+            duration_seconds=duration_seconds,
+            detected_by=str(detected_by or "")[:64],
+            media_kind_hint=media_kind_hint,
+        )
 
         item = DownloadItem(
             url=normalized_url,
@@ -298,10 +435,20 @@ class DownloadManager(QObject):
             speed_limit_kbps=limit,
             source_browser=str(source_browser or "")[:32],
             referrer=str(referrer or "")[:8192],
+            content_type=str(content_type or "")[:255],
+            media_kind=metadata["media_kind"],
+            page_url=metadata["page_url"],
+            page_title=metadata["page_title"],
+            source_domain=metadata["source_domain"],
+            file_format=metadata["file_format"],
+            expected_sha256=normalize_sha256(expected_sha256),
+            checksum_status="pending" if normalize_sha256(expected_sha256) else "not-requested",
         )
         self._items[item.id] = item
         self._order.append(item.id)
         self._save_item(item)
+        self._save_media(item, metadata)
+        self._event(item.id, "added", 0)
         logger.info("Queued download %s (%s)", item.id, item.filename)
         self.download_added.emit(item)
         self.queue_changed.emit()
@@ -374,6 +521,7 @@ class DownloadManager(QObject):
                 limiter=self._limiter,
                 connections=item.connections,
                 speed_limit_kbps=item.speed_limit_kbps,
+                expected_sha256=item.expected_sha256,
                 parent=self,
             )
         except Exception as exc:
@@ -389,6 +537,7 @@ class DownloadManager(QObject):
         worker.state.connect(self._on_worker_state)
         worker.metadata.connect(self._on_worker_metadata)
         worker.segments.connect(self._on_worker_segments)
+        worker.integrity.connect(self._on_worker_integrity)
         worker.completed.connect(self._on_worker_completed)
         worker.failed.connect(self._on_worker_failed)
         worker.thread_finished.connect(self._on_worker_finished)
@@ -422,6 +571,7 @@ class DownloadManager(QObject):
                 item.speed = 0.0
                 item.eta = None
                 self._save_item(item)
+                self._event(item.id, "paused", 0)
                 self.download_updated.emit(item)
                 changed += 1
                 continue
@@ -430,6 +580,7 @@ class DownloadManager(QObject):
                 item.status = DownloadStatus.PAUSING
                 item.error = ""
                 self._save_item(item)
+                self._event(item.id, "paused", 0)
                 self.download_updated.emit(item)
                 worker.request_pause()
                 changed += 1
@@ -449,7 +600,9 @@ class DownloadManager(QObject):
             item.speed = 0.0
             item.eta = None
             item.queue_seq = self._front_sequence()
+            self._network_waiting.discard(download_id)
             self._save_item(item)
+            self._event(item.id, "resumed", 0)
             self.download_updated.emit(item)
             changed += 1
         if changed:
@@ -464,6 +617,7 @@ class DownloadManager(QObject):
             item = self._items.get(download_id)
             if item is None:
                 continue
+            self._network_waiting.discard(download_id)
             worker = self._workers.get(download_id)
             if worker is not None and item.is_active:
                 item.status = DownloadStatus.STOPPING
@@ -505,6 +659,7 @@ class DownloadManager(QObject):
                 self._order.remove(download_id)
             self._dirty.discard(download_id)
             self._segment_persist_at.pop(download_id, None)
+            self._network_waiting.discard(download_id)
             if self._store is not None:
                 try:
                     self._store.delete_download(download_id)
@@ -515,6 +670,7 @@ class DownloadManager(QObject):
                         exc_info=True,
                     )
             self.download_removed.emit(download_id)
+            self._event(download_id, "removed", 0)
             removed += 1
         if removed:
             self.queue_changed.emit()
@@ -558,6 +714,9 @@ class DownloadManager(QObject):
         )
         self._auto_retry = self._settings.auto_retry
         self._max_retries = self._settings.max_retries
+        self._auto_resume_on_network = bool(
+            getattr(self._settings, "auto_resume_on_network", True)
+        )
         self._limiter.set_limit_kbps(self._settings.speed_limit_kbps)
         self._pump()
 
@@ -600,6 +759,13 @@ class DownloadManager(QObject):
             item.total_bytes = total
         item.content_type = content_type or item.content_type
         item.range_supported = bool(range_supported)
+        discovered = media_kind_for(item.content_type, item.filename)
+        if discovered and not item.media_kind:
+            item.media_kind = discovered
+            item.file_format = format_for(item.content_type, item.filename)
+            self._save_media(item)
+        elif not item.file_format:
+            item.file_format = format_for(item.content_type, item.filename)
         self._mark_dirty(item)
         self.download_updated.emit(item)
 
@@ -614,6 +780,20 @@ class DownloadManager(QObject):
             item.connections = len(item.segments)
         self._persist_segments(item)
         self.download_updated.emit(item)
+
+    def _on_worker_integrity(
+        self, download_id: str, status: str, digest: str = ""
+    ) -> None:
+        item = self._items.get(download_id)
+        if item is None:
+            return
+        if status in {"verified", "mismatch"}:
+            item.checksum_status = status
+            item.integrity_verified_at = datetime.now().isoformat(timespec="seconds")
+            if status == "verified":
+                item.error = ""
+            self._mark_dirty(item)
+            self.download_updated.emit(item)
 
     def _persist_segments(self, item: DownloadItem, force: bool = False) -> None:
         if self._store is None:
@@ -671,6 +851,7 @@ class DownloadManager(QObject):
         item.error = ""
         item.segments = []
         self._segment_persist_at.pop(download_id, None)
+        self._network_waiting.discard(download_id)
         if self._store is not None:
             try:
                 self._store.delete_segments(download_id)
@@ -679,6 +860,13 @@ class DownloadManager(QObject):
         logger.info("Download completed: %s", item.filename)
         self._log(item, "info", f"Completed: {path.name}")
         self._save_item(item)
+        self._event(item.id, "completed", size)
+        self._notify(
+            "success",
+            "Download complete",
+            f"{item.filename} ({_format_bytes(size)})",
+            item.id,
+        )
         self.download_updated.emit(item)
         self.download_completed.emit(item)
         self.queue_changed.emit()
@@ -688,6 +876,9 @@ class DownloadManager(QObject):
         item = self._items.get(download_id)
         if item is None:
             return
+        if self._should_wait_for_network(message):
+            self._wait_for_network(item, message)
+            return
         item.status = DownloadStatus.FAILED
         item.error = message
         item.speed = 0.0
@@ -695,10 +886,94 @@ class DownloadManager(QObject):
         logger.warning("Download failed: %s (%s)", item.filename, message)
         self._log(item, "error", message)
         self._save_item(item)
+        self._event(item.id, "failed", 0)
+        self._notify(
+            "error",
+            "Download failed",
+            f"{item.filename}: {message}",
+            item.id,
+        )
         self.download_updated.emit(item)
         self.download_failed.emit(item)
         self.queue_changed.emit()
         self._emit_stats(force=True)
+
+    # ------------------------------------------------------------------ network
+    def _should_wait_for_network(self, message: str) -> bool:
+        return (
+            self._auto_resume_on_network
+            and self._auto_retry
+            and not self._shutting_down
+            and _looks_like_network_failure(message)
+        )
+
+    def _wait_for_network(self, item: DownloadItem, message: str) -> None:
+        newly_waiting = item.id not in self._network_waiting
+        self._network_waiting.add(item.id)
+        item.status = DownloadStatus.PAUSED
+        item.error = _NETWORK_WAIT_MESSAGE
+        item.speed = 0.0
+        item.eta = None
+        self._log(item, "warning", f"{message} {_NETWORK_WAIT_MESSAGE}")
+        self._event(item.id, "network-wait", 0)
+        if newly_waiting:
+            self._notify(
+                "warning",
+                "Connection lost",
+                f"{item.filename} is paused until the network returns.",
+                item.id,
+            )
+        self._save_item(item)
+        logger.info(
+            "Download %s paused because the network is unavailable: %s",
+            item.id,
+            message,
+        )
+        self.download_updated.emit(item)
+        self.queue_changed.emit()
+        self._emit_stats(force=True)
+        self._schedule_network_retry()
+
+    def _schedule_network_retry(self) -> None:
+        if not self._network_waiting or self._shutting_down:
+            return
+        if not self._network_monitor.available:
+            self._network_retry_timer.start()
+
+    def _on_network_changed(self, online: bool) -> None:
+        if online:
+            self._resume_network_waiting()
+
+    def _retry_network_waiting(self) -> None:
+        if self._shutting_down or not self._network_waiting:
+            return
+        if not self._network_monitor.online:
+            self._network_retry_timer.start()
+            return
+        self._resume_network_waiting()
+
+    def _resume_network_waiting(self) -> None:
+        if self._shutting_down or not self._network_waiting:
+            return
+        pending = [
+            download_id
+            for download_id in self._network_waiting
+            if download_id in self._items
+        ]
+        self._network_waiting.clear()
+        if not pending:
+            return
+        resumed = self.resume(pending)
+        if resumed:
+            logger.info("Resumed %d downloads after the network returned", resumed)
+            self._notify(
+                "info",
+                "Connection restored",
+                f"{resumed} download(s) resumed automatically.",
+            )
+            self._event(None, "network-restored", 0)
+        else:
+            self._schedule_network_retry()
 
     def _on_worker_finished(self, download_id: str) -> None:
         worker = self._workers.pop(download_id, None)
@@ -748,6 +1023,7 @@ class DownloadManager(QObject):
         self._shutting_down = True
         self._stats_timer.stop()
         self._persist_timer.stop()
+        self._network_retry_timer.stop()
         self._flush_persistence()
         for item in self._items.values():
             self._save_item(item)
@@ -765,6 +1041,11 @@ class DownloadManager(QObject):
         for item in self._items.values():
             self._save_item(item)
         self._flush_queue()
+
+
+def _looks_like_network_failure(message: str) -> bool:
+    lowered = (message or "").casefold()
+    return any(hint in lowered for hint in _NETWORK_FAILURE_HINTS)
 
 
 def _item_from_record(record: dict) -> DownloadItem | None:
@@ -804,6 +1085,14 @@ def _item_from_record(record: dict) -> DownloadItem | None:
         etag=str(record.get("etag") or ""),
         last_modified=str(record.get("last_modified") or ""),
         retry_count=max(0, _optional_int(record.get("retry_count"), 0) or 0),
+        media_kind=str(record.get("media_kind") or ""),
+        page_url=str(record.get("page_url") or ""),
+        page_title=str(record.get("page_title") or ""),
+        source_domain=str(record.get("source_domain") or ""),
+        file_format=str(record.get("file_format") or ""),
+        expected_sha256=str(record.get("expected_sha256") or ""),
+        checksum_status=str(record.get("checksum_status") or "not-requested"),
+        integrity_verified_at=str(record.get("integrity_verified_at") or ""),
         created_at=_parse_datetime(record.get("created_at")) or datetime.now(),
         completed_at=_parse_datetime(record.get("completed_at")),
         last_try=_parse_datetime(record.get("last_try")),
@@ -835,3 +1124,12 @@ def _parse_datetime(value) -> datetime | None:
         return datetime.fromisoformat(str(value))
     except (TypeError, ValueError):
         return None
+
+
+def _format_bytes(size: int) -> str:
+    value = float(max(0, int(size)))
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if value < 1024 or unit == "TB":
+            return f"{value:.1f} {unit}"
+        value /= 1024
+    return f"{value:.1f} TB"

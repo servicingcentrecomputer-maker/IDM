@@ -25,7 +25,10 @@ from integrations.protocol import (
     response_ok,
     validate_filename,
     validate_http_url,
+    validate_media_kind,
     validate_mime,
+    validate_page_title,
+    validate_quality_label,
     validate_referrer,
     validate_total_bytes,
     write_message,
@@ -220,8 +223,60 @@ def test_normalize_download_request_strips_to_allowlisted_fields() -> None:
         "mime": "application/zip",
         "total_bytes": 2048,
         "ask_folder": False,
+        "page_title": "",
+        "media_kind": "",
+        "quality_label": "",
+        "duration_seconds": None,
+        "detected_by": "",
     }
     assert "extra" not in normalized
+
+
+def test_media_metadata_is_validated_and_normalized() -> None:
+    normalized = normalize_download_request(
+        _download_message(
+            page_url="https://example.com/watch",
+            page_title="  Sample clip  ",
+            media_kind="VIDEO",
+            quality_label="1080p",
+            duration_seconds=93,
+            detected_by="media",
+        )
+    )
+    assert normalized["page_url"] == "https://example.com/watch"
+    assert normalized["page_title"] == "Sample clip"
+    assert normalized["media_kind"] == "video"
+    assert normalized["quality_label"] == "1080p"
+    assert normalized["duration_seconds"] == 93
+    assert normalized["detected_by"] == "media"
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("page_title", "bad\x00title"),
+        ("page_title", "x" * 513),
+        ("media_kind", "stream"),
+        ("quality_label", "x" * 65),
+        ("duration_seconds", -1),
+        ("duration_seconds", True),
+        ("duration_seconds", "93"),
+        ("detected_by", "scraping"),
+    ],
+)
+def test_invalid_media_metadata_is_rejected(field: str, value) -> None:
+    with pytest.raises(ValidationError):
+        normalize_download_request(_download_message(**{field: value}))
+
+
+def test_media_helpers_accept_only_known_values() -> None:
+    assert validate_media_kind(None) == ""
+    assert validate_media_kind("AUDIO") == "audio"
+    assert validate_page_title(None) == ""
+    assert validate_quality_label(None) == ""
+    assert validate_total_bytes(None) is None
+    with pytest.raises(ValidationError):
+        validate_media_kind("movie")
 
 
 def test_ask_folder_is_an_optional_boolean() -> None:
@@ -267,7 +322,7 @@ def test_duplicate_tracker_expires_and_bounds_entries() -> None:
 def test_response_helpers_have_stable_shape() -> None:
     ok = response_ok("req-12345678", "status", connected=True)
     assert ok["ok"] is True
-    assert ok["protocol"] == 1
+    assert ok["protocol"] == 2
     assert ok["request_id"] == "req-12345678"
     assert ok["connected"] is True
 

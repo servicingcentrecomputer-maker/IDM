@@ -1,12 +1,15 @@
-; IDM 2.0.1 installer
+; IDM 3.0.0 installer
 ; Compile with Inno Setup 6.3+ or 7.x:
 ;   ISCC.exe installer\IDM_Setup.iss
 ;
-; The installer never writes to the application data directory.  User data
-; lives in %APPDATA%\IDM Download Manager (database, logs, settings and
-; downloads) and is preserved across upgrades.  The uninstaller removes it
-; only when the user explicitly chooses to, or when /REMOVEDATA is passed.
-; The folder name is distinct from the commercial IDM's %APPDATA%\IDM folder.
+; Upgrades from 1.0.0, 2.0.0 and 2.0.1 reuse the same AppId and previous
+; installation directory, so user data, settings, history and the download
+; queue remain in place.  The installer never writes to the application data
+; directory.  User data lives in %APPDATA%\IDM Download Manager (database,
+; logs, settings and downloads) and is preserved across upgrades.  The
+; uninstaller removes it only when the user explicitly chooses to, or when
+; /REMOVEDATA is passed.  The folder name is distinct from the commercial
+; IDM's %APPDATA%\IDM folder.
 ;
 ; The installation includes IDM_Updater.exe, which IDM copies to a temporary
 ; folder and runs outside {app} to verify and install future updates.  That
@@ -14,13 +17,14 @@
 ;
 ; IDM_NativeHost.exe is registered per user (HKCU) for each detected browser
 ; only when the matching optional task is selected.  Browser extensions are
-; shipped as ZIP packages in {app}\browser-extensions and are never installed
-; automatically; the user loads them from the browser's extension page or a
-; store.
+; shipped as ZIP packages in {app}\browser-extensions and as the unpacked
+; IDM Video Assistant in {app}\BrowserExtension\IDMVideoAssistant; they are
+; never installed automatically.  The user loads them from the browser's
+; extension page or a store.
 
 #define MyAppName "IDM"
-#define MyAppVersion "2.0.1"
-#define MyAppVerName "IDM 2.0.1"
+#define MyAppVersion "3.0.0"
+#define MyAppVerName "IDM 3.0.0"
 #define MyAppPublisher "IDM"
 #define MyAppExeName "IDM.exe"
 #define NativeHostExeName "IDM_NativeHost.exe"
@@ -37,13 +41,13 @@ AppVersion={#MyAppVersion}
 AppVerName={#MyAppVerName}
 AppPublisher={#MyAppPublisher}
 AppCopyright=Copyright (C) 2026 IDM
-VersionInfoVersion=2.0.1.0
+VersionInfoVersion=3.0.0.0
 VersionInfoTextVersion={#MyAppVersion}
 VersionInfoCompany={#MyAppPublisher}
 VersionInfoDescription=IDM Setup
 VersionInfoProductName={#MyAppName}
 VersionInfoProductVersion={#MyAppVersion}
-VersionInfoOriginalFileName=IDM_Setup.exe
+VersionInfoOriginalFileName=IDM-Setup-{#MyAppVersion}.exe
 
 DefaultDirName={autopf}\IDM
 DefaultGroupName=IDM
@@ -58,7 +62,7 @@ ArchitecturesInstallIn64BitMode=x64compatible
 MinVersion=10.0
 
 OutputDir=..\dist-installer
-OutputBaseFilename=IDM_Setup
+OutputBaseFilename=IDM-Setup-{#MyAppVersion}
 SetupIconFile=..\assets\logo\idm.ico
 UninstallDisplayIcon={app}\{#MyAppExeName}
 UninstallDisplayName={#MyAppName}
@@ -95,6 +99,7 @@ Name: "firefox"; Description: "Integrate with Mozilla Firefox"; GroupDescription
 [Files]
 Source: "..\dist\IDM\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "..\dist-extensions\*.zip"; DestDir: "{app}\browser-extensions"; Flags: ignoreversion skipifsourcedoesntexist
+Source: "..\BrowserExtension\IDMVideoAssistant\*"; DestDir: "{app}\BrowserExtension\IDMVideoAssistant"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Dirs]
 Name: "{app}\browser-integration"
@@ -283,6 +288,19 @@ begin
       RegisterBrowser('firefox')
     else
       UnregisterBrowser('firefox');
+
+    if (not WizardSilent) and
+       ((ChromeTaskSelected() and IsChromeInstalled()) or
+        (EdgeTaskSelected() and IsEdgeInstalled())) then
+      MsgBox(
+        'The IDM native host is registered, but the IDM Video Assistant is not installed automatically.' + #13#10 + #13#10 +
+        'To finish Chrome or Edge integration:' + #13#10 +
+        '1. Open chrome://extensions (or edge://extensions).' + #13#10 +
+        '2. Turn on Developer mode.' + #13#10 +
+        '3. Choose Load unpacked and select:' + #13#10 +
+        ExpandConstant('{app}') + '\BrowserExtension\IDMVideoAssistant' + #13#10 + #13#10 +
+        'See BrowserIntegrationGuide.md for details. IDM never installs browser extensions silently.',
+        mbInformation, MB_OK);
   end;
 end;
 

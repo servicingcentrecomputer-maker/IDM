@@ -8,6 +8,7 @@ dist/
 dist-installer/
 dist-extensions/
 release/
+IDM_V3_Release/
 .pytest_cache/
 .ruff_cache/
 Backup/

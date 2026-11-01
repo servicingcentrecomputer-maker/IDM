@@ -4,7 +4,14 @@ from __future__ import annotations
 
 import sqlite3
 
-from idm.core.database import _SCHEMA_V1, SCHEMA_VERSION, Database
+from idm.core.database import (
+    _SCHEMA_V1,
+    _SCHEMA_V2,
+    _V2_DOWNLOAD_COLUMNS,
+    _V3_DOWNLOAD_COLUMNS,
+    SCHEMA_VERSION,
+    Database,
+)
 
 _LEGACY_DOWNLOAD_SQL = """
 INSERT INTO downloads (
@@ -204,5 +211,137 @@ def test_records_without_browser_metadata_use_schema_defaults(tmp_path) -> None:
         stored = database.load_downloads()[0]
         assert stored["source_browser"] == "chrome"
         assert stored["referrer"] == "https://example.com/page"
+    finally:
+        database.close()
+
+
+def _create_v3_database(path) -> None:
+    connection = sqlite3.connect(str(path))
+    try:
+        connection.executescript(_SCHEMA_V1)
+        connection.executescript(_SCHEMA_V2)
+        for name, declaration in _V2_DOWNLOAD_COLUMNS + _V3_DOWNLOAD_COLUMNS:
+            connection.execute(
+                f"ALTER TABLE downloads ADD COLUMN {name} {declaration}"
+            )
+        connection.execute(
+            "INSERT INTO app_settings (key, value, kind) VALUES (?, ?, ?)",
+            ("theme", '"dark"', "json"),
+        )
+        connection.execute(_LEGACY_DOWNLOAD_SQL)
+        connection.execute("PRAGMA user_version = 3")
+        connection.commit()
+    finally:
+        connection.close()
+
+
+def test_v3_database_migrates_to_v4_with_verified_backup(tmp_path) -> None:
+    path = tmp_path / "v3.sqlite3"
+    _create_v3_database(path)
+
+    database = Database(path)
+    try:
+        assert SCHEMA_VERSION == 4
+        version = database._connection.execute("PRAGMA user_version").fetchone()[0]
+        assert int(version) == 4
+
+        backup = database.migration_backup_path
+        assert backup is not None and backup.is_file()
+        assert backup.parent == tmp_path / "backups"
+        check = sqlite3.connect(str(backup))
+        try:
+            assert check.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+            assert check.execute("PRAGMA user_version").fetchone()[0] == 3
+            assert check.execute("SELECT COUNT(*) FROM downloads").fetchone()[0] == 1
+        finally:
+            check.close()
+
+        record = database.load_downloads()[0]
+        assert record["id"] == "legacy-1"
+        assert record["media_kind"] == ""
+        assert record["checksum_status"] == "not-requested"
+        assert database.load_settings()["theme"] == "dark"
+        assert {"media_metadata", "notifications", "download_events"}.issubset(
+            _tables(database)
+        )
+        assert {
+            "media_kind",
+            "source_domain",
+            "expected_sha256",
+            "checksum_status",
+        }.issubset(_columns(database, "downloads"))
+    finally:
+        database.close()
+
+
+def test_media_metadata_notifications_and_events_round_trip(tmp_path) -> None:
+    database = Database(tmp_path / "media.sqlite3")
+    try:
+        record = {
+            "id": "video-1",
+            "url": "https://cdn.example.com/clip.mp4",
+            "filename": "clip.mp4",
+            "folder": str(tmp_path),
+            "category": "Videos",
+            "priority": 1,
+            "status": "Completed",
+            "total_bytes": 2048,
+            "downloaded_bytes": 2048,
+            "speed": 0,
+            "eta": None,
+            "error": "",
+            "content_type": "video/mp4",
+            "range_supported": 1,
+            "created_at": "2026-01-01T10:00:00",
+            "completed_at": "2026-01-01T10:01:00",
+            "last_try": None,
+            "queue_seq": 0,
+            "connections": 4,
+            "speed_limit_kbps": 0,
+            "etag": "",
+            "last_modified": "",
+            "retry_count": 0,
+            "media_kind": "video",
+            "file_format": "mp4",
+        }
+        database.save_download(record)
+        database.save_media_metadata(
+            "video-1",
+            {
+                "media_kind": "video",
+                "page_url": "https://example.com/watch",
+                "page_title": "Example clip",
+                "source_domain": "cdn.example.com",
+                "quality_label": "720p",
+                "duration_seconds": 42,
+                "detected_by": "video-assistant",
+            },
+        )
+        stored = database.load_media_metadata("video-1")
+        assert stored["media_kind"] == "video"
+        assert stored["quality_label"] == "720p"
+        assert stored["duration_seconds"] == 42
+        assert database.load_all_media_metadata()["video-1"]["page_title"] == "Example clip"
+
+        notification_id = database.add_notification(
+            "success", "Download complete", "clip.mp4", "video-1"
+        )
+        assert database.unread_notification_count() == 1
+        database.mark_notification_read(notification_id)
+        assert database.unread_notification_count() == 0
+        assert database.load_notifications()[0]["read_at"]
+
+        database.add_download_event("video-1", "completed", 2048)
+        events = database.load_download_events()
+        assert events[0]["event"] == "completed"
+        assert events[0]["bytes"] == 2048
+        summary = database.download_summary()
+        assert summary["total"] == 1
+        assert summary["completed"] == 1
+        assert summary["completed_bytes"] == 2048
+
+        database.delete_download("video-1")
+        assert database.load_media_metadata("video-1") is None
+        assert database.load_notifications()[0]["download_id"] == "video-1"
     finally:
         database.close()

@@ -74,6 +74,14 @@ class DownloadItem:
     etag: str = ""
     last_modified: str = ""
     retry_count: int = 0
+    media_kind: str = ""
+    page_url: str = ""
+    page_title: str = ""
+    source_domain: str = ""
+    file_format: str = ""
+    expected_sha256: str = ""
+    checksum_status: str = "not-requested"
+    integrity_verified_at: str = ""
     segments: list[dict] = field(default_factory=list)
     created_at: datetime = field(default_factory=datetime.now)
     completed_at: datetime | None = None
@@ -116,3 +124,30 @@ class DownloadItem:
         if not self.total_bytes or self.total_bytes <= 0:
             return None
         return max(0.0, min(1.0, self.downloaded_bytes / self.total_bytes))
+
+    @property
+    def is_video(self) -> bool:
+        return self.media_kind == "video" or self.category == "Videos"
+
+    @property
+    def is_audio(self) -> bool:
+        return self.media_kind == "audio" or self.category == "Music"
+
+    @property
+    def media_label(self) -> str:
+        label = self.file_format.upper()
+        if label:
+            return label
+        if self.content_type:
+            return self.content_type.split("/")[-1].split(";")[0].upper()
+        return "FILE"
+
+    @property
+    def integrity_label(self) -> str:
+        if self.checksum_status == "verified":
+            return "Verified"
+        if self.checksum_status == "mismatch":
+            return "Checksum mismatch"
+        if self.checksum_status == "pending":
+            return "Pending"
+        return ""

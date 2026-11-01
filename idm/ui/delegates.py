@@ -219,6 +219,113 @@ class StatusDelegate(_BaseDelegate):
         painter.restore()
 
 
+class TextDelegate(_BaseDelegate):
+    """Left-aligned text cell with an optional muted or emphasised style."""
+
+    def __init__(self, theme: ThemeManager, parent=None, *, muted=False, strong=False) -> None:
+        super().__init__(theme, parent)
+        self._muted = muted
+        self._strong = strong
+
+    def paint(self, painter: QPainter, option: QStyleOptionViewItem, index: QModelIndex) -> None:
+        painter.save()
+        self._paint_background(painter, option, index)
+        p = self._theme.palette
+        text = str(index.data(Qt.ItemDataRole.DisplayRole) or "")
+
+        font = QFont(option.font)
+        if self._strong:
+            font.setWeight(QFont.Weight.DemiBold)
+        painter.setFont(font)
+        if self._is_selected(option):
+            color = option.palette.color(QPalette.ColorRole.HighlightedText)
+        elif self._muted:
+            color = QColor(p.text_muted)
+        else:
+            color = QColor(p.text)
+        painter.setPen(color)
+
+        rect = option.rect.adjusted(12, 0, -10, 0)
+        metrics = QFontMetrics(font)
+        elided = metrics.elidedText(text, Qt.TextElideMode.ElideRight, rect.width())
+        painter.drawText(
+            rect,
+            int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
+            elided,
+        )
+
+        self._paint_separator(painter, option)
+        painter.restore()
+
+
+class ProgressDelegate(_BaseDelegate):
+    """Progress bar with a percentage label, used by the video table."""
+
+    def paint(self, painter: QPainter, option: QStyleOptionViewItem, index: QModelIndex) -> None:
+        item = index.data(ITEM_ROLE)
+        if item is None:
+            super().paint(painter, option, index)
+            return
+
+        painter.save()
+        self._paint_background(painter, option, index)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        p = self._theme.palette
+
+        fraction = 1.0 if item.status == DownloadStatus.COMPLETED else (item.progress or 0.0)
+        if item.status == DownloadStatus.QUEUED:
+            label = "Queued"
+        else:
+            label = f"{round(fraction * 100)}%"
+        if self._is_selected(option):
+            label_color = option.palette.color(QPalette.ColorRole.HighlightedText)
+        else:
+            label_color = QColor(p.text_muted)
+
+        font = QFont(option.font)
+        font.setPointSizeF(max(8.0, option.font.pointSizeF() - 0.5))
+        painter.setFont(font)
+        label_width = QFontMetrics(font).horizontalAdvance("100%") + 8
+        bar = QRect(
+            option.rect.left() + 12,
+            option.rect.center().y() - 2,
+            max(10, option.rect.width() - label_width - 24),
+            5,
+        )
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(p.track))
+        painter.drawRoundedRect(QRectF(bar), 2.5, 2.5)
+
+        fill = QColor(p.accent)
+        if item.status == DownloadStatus.FAILED:
+            fill = QColor(p.danger)
+        elif item.status in {DownloadStatus.PAUSED, DownloadStatus.STOPPED}:
+            fill = QColor(p.warning)
+        if fraction > 0:
+            width = max(0.0, bar.width() * min(1.0, fraction))
+            if width >= 1:
+                painter.setBrush(fill)
+                painter.drawRoundedRect(
+                    QRectF(bar.left(), bar.top(), width, bar.height()), 2.5, 2.5
+                )
+
+        painter.setPen(label_color)
+        label_rect = QRect(
+            bar.right() + 7,
+            option.rect.top(),
+            label_width,
+            option.rect.height(),
+        )
+        painter.drawText(
+            label_rect,
+            int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
+            label,
+        )
+
+        self._paint_separator(painter, option)
+        painter.restore()
+
+
 class ValueDelegate(_BaseDelegate):
     """Right-aligned secondary values (size, time left, rate, last try)."""
 
