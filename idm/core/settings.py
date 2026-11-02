@@ -39,6 +39,7 @@ _DEFAULTS: dict[str, Any] = {
     "auto_resume_on_network": True,
     "speed_limit_kbps": 0,
     "confirm_delete": True,
+    "show_completion_dialog": True,
     "start_immediately": True,
     "restore_session": True,
     "show_toolbar": True,
@@ -92,6 +93,7 @@ class AppSettings:
         self.auto_resume_on_network: bool = _DEFAULTS["auto_resume_on_network"]
         self.speed_limit_kbps: int = _DEFAULTS["speed_limit_kbps"]
         self.confirm_delete: bool = _DEFAULTS["confirm_delete"]
+        self.show_completion_dialog: bool = _DEFAULTS["show_completion_dialog"]
         self.start_immediately: bool = _DEFAULTS["start_immediately"]
         self.restore_session: bool = _DEFAULTS["restore_session"]
         self.show_toolbar: bool = _DEFAULTS["show_toolbar"]
@@ -178,6 +180,12 @@ class AppSettings:
         self.confirm_delete = _coerce_bool(
             values.get("confirm_delete", _DEFAULTS["confirm_delete"]),
             _DEFAULTS["confirm_delete"],
+        )
+        self.show_completion_dialog = _coerce_bool(
+            values.get(
+                "show_completion_dialog", _DEFAULTS["show_completion_dialog"]
+            ),
+            _DEFAULTS["show_completion_dialog"],
         )
         self.start_immediately = _coerce_bool(
             values.get("start_immediately", _DEFAULTS["start_immediately"]),
@@ -319,6 +327,7 @@ class AppSettings:
             )
         for key in (
             "confirm_delete",
+            "show_completion_dialog",
             "start_immediately",
             "restore_session",
             "show_toolbar",
@@ -399,6 +408,7 @@ class AppSettings:
             "auto_resume_on_network": self.auto_resume_on_network,
             "speed_limit_kbps": self.speed_limit_kbps,
             "confirm_delete": self.confirm_delete,
+            "show_completion_dialog": self.show_completion_dialog,
             "start_immediately": self.start_immediately,
             "restore_session": self.restore_session,
             "show_toolbar": self.show_toolbar,

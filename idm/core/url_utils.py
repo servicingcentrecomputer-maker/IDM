@@ -248,8 +248,8 @@ def format_timestamp(moment: datetime | None) -> str:
     return moment.strftime("%Y-%m-%d %H:%M")
 
 
-def format_last_try(moment: datetime | None) -> str:
-    """Compact timestamp used by the Last Try table column."""
+def format_relative_time(moment: datetime | None) -> str:
+    """Compact human timestamp shared by the Date Added and Last Try columns."""
     if moment is None:
         return "—"
     today = datetime.now().date()
@@ -261,6 +261,16 @@ def format_last_try(moment: datetime | None) -> str:
     if day.year == today.year:
         return moment.strftime("%b %d, %H:%M")
     return moment.strftime("%Y-%m-%d %H:%M")
+
+
+def format_last_try(moment: datetime | None) -> str:
+    """Compact timestamp used by retry tooltips."""
+    return format_relative_time(moment)
+
+
+def format_date_added(moment: datetime | None) -> str:
+    """Date Added column value."""
+    return format_relative_time(moment)
 
 
 def parse_content_range_total(value: str | None) -> int | None:

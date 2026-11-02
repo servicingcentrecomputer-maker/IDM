@@ -37,7 +37,10 @@ from ..constants import (
     APP_DESCRIPTION,
     APP_NAME,
     CATEGORY_FILTER_KEYS,
+    CUSTOM_CATEGORY_PREFIX,
     PRIORITY_NORMAL,
+    custom_category_key,
+    custom_category_name,
 )
 from ..core.paths import last_rollback_plan_file, updater_log_file
 from ..core.scheduler import DownloadScheduler
@@ -78,6 +81,8 @@ from integrations.paths import native_manifest_dir
 from integrations.service import BrowserIntegrationService
 from . import design, icons
 from .dialogs.about import AboutDialog
+from .dialogs.categories import CategoryManagerDialog
+from .dialogs.complete import DownloadCompleteDialog
 from .dialogs.download_file_info import AddDownloadDialog
 from .dialogs.options import OptionsDialog
 from .dialogs.progress import DownloadProgressDialog
@@ -169,9 +174,11 @@ class MainWindow(QMainWindow):
         self._action_icons: dict[str, str] = {}
         self._theme_actions: dict[str, QAction] = {}
         self._progress_dialogs: dict[str, DownloadProgressDialog] = {}
+        self._completion_dialogs: dict[str, DownloadCompleteDialog] = {}
         self._update_notification = None
         self._update_window = None
         self._last_content_key = "all"
+        self._custom_names: tuple[str, ...] = ()
         self._recovery: StartupReport | None = None
         self._database_restored = bool(database_restored)
 
@@ -208,6 +215,7 @@ class MainWindow(QMainWindow):
 
         self._build_menu_bar()
         self._build_ui()
+        self._refresh_custom_categories()
         self._wire_signals()
         self._update_scheduler.update_available.connect(
             self._on_update_available
@@ -288,6 +296,10 @@ class MainWindow(QMainWindow):
             downloads_menu, "stop", "Stop", self._stop_selected,
             "Ctrl+Shift+S", "stop",
         )
+        self._add_action(
+            downloads_menu, "stop_all", "Stop All", self._stop_all,
+            None, "stop_all",
+        )
         downloads_menu.addSeparator()
         self._add_action(
             downloads_menu, "delete", "Delete", self._delete_selected, None, "delete"
@@ -318,6 +330,25 @@ class MainWindow(QMainWindow):
             theme_group.addAction(action)
             theme_menu.addAction(action)
             self._theme_actions[mode] = action
+
+        tasks_menu = bar.addMenu("&Tasks")
+        self._add_action(
+            tasks_menu, "options", "Options…",
+            lambda: self._open_options(), "Ctrl+,", "options",
+        )
+        self._add_action(
+            tasks_menu, "scheduler", "Scheduler…", self._open_scheduler,
+            "Ctrl+Shift+T", "scheduler",
+        )
+        self._add_action(
+            tasks_menu, "queue", "Queue Manager…", self._open_queue,
+            "Ctrl+Shift+Q", "queue",
+        )
+        tasks_menu.addSeparator()
+        self._add_action(
+            tasks_menu, "categories", "Manage Categories…",
+            self._open_categories, None, "folder",
+        )
 
         help_menu = bar.addMenu("&Help")
         self._add_action(
@@ -499,6 +530,8 @@ class MainWindow(QMainWindow):
         )
         if hasattr(self, "_search"):
             self._search.setVisible(downloads_visible and self.width() >= 1200)
+        if hasattr(self, "_toolbar"):
+            self._toolbar.set_compact(self.width() < 1320)
 
     # ------------------------------------------------------------------ wiring
     def _wire_signals(self) -> None:
@@ -508,7 +541,9 @@ class MainWindow(QMainWindow):
         toolbar.resume_all_requested.connect(self._resume_all)
         toolbar.pause_requested.connect(self._pause_selected)
         toolbar.stop_requested.connect(self._stop_selected)
+        toolbar.stop_all_requested.connect(self._stop_all)
         toolbar.delete_requested.connect(self._delete_selected)
+        toolbar.delete_completed_requested.connect(self._delete_completed)
         toolbar.options_requested.connect(self._open_options)
         toolbar.scheduler_requested.connect(self._open_scheduler)
         toolbar.queue_requested.connect(self._open_queue)
@@ -594,6 +629,7 @@ class MainWindow(QMainWindow):
 
     def _on_page_settings_applied(self) -> None:
         design.set_animations_enabled(bool(self._settings.ui_animations))
+        self._refresh_custom_categories()
         self._manager.apply_settings()
         self._theme.set_mode(self._settings.theme)
         self._apply_view_settings()
@@ -601,10 +637,15 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------------------------ navigation
     def _navigate_to(self, key: str) -> None:
-        if key not in self._pages and key not in _FILTER_TITLES:
+        if (
+            key not in self._pages
+            and key not in _FILTER_TITLES
+            and not key.startswith(CUSTOM_CATEGORY_PREFIX)
+        ):
             return
         self._sidebar.select(key)
         self._on_filter_changed(key)
+
     def _open_download_item(self, download_id: str) -> None:
         item = self._manager.get(download_id)
         if item is None:
@@ -714,19 +755,23 @@ class MainWindow(QMainWindow):
         )
         resumable_all = any(item.status in _RESUMABLE_ALL for item in all_items)
         pausable_all = any(item.can_pause for item in all_items)
+        stoppable_all = any(item.can_stop for item in all_items)
 
         self._toolbar.update_actions(
             can_pause=any(item.can_pause for item in items),
             can_resume=any(item.can_resume for item in items),
             can_stop=any(item.can_stop for item in items),
             can_delete=bool(items),
+            can_delete_completed=completed_exists,
             can_resume_all=resumable_all,
+            can_stop_all=stoppable_all,
         )
         self._actions["resume"].setEnabled(any(item.can_resume for item in items))
         self._actions["resume_all"].setEnabled(resumable_all)
         self._actions["pause"].setEnabled(any(item.can_pause for item in items))
         self._actions["pause_all"].setEnabled(pausable_all)
         self._actions["stop"].setEnabled(any(item.can_stop for item in items))
+        self._actions["stop_all"].setEnabled(stoppable_all)
         self._actions["delete"].setEnabled(bool(items))
         self._actions["delete_completed"].setEnabled(completed_exists)
         self._actions["export"].setEnabled(bool(all_items))
@@ -840,6 +885,17 @@ class MainWindow(QMainWindow):
             )
         self._update_actions()
 
+    def _stop_all(self) -> None:
+        ids = [item.id for item in self._manager.items() if item.can_stop]
+        count = self._manager.stop(ids)
+        if count:
+            self._status_bar.show_message(
+                f"Stopped {count} download{'s' if count != 1 else ''}."
+            )
+        else:
+            self._status_bar.show_message("There are no active downloads to stop.")
+        self._update_actions()
+
     def _delete_selected(self) -> None:
         items = self._selected_items()
         if not items:
@@ -927,6 +983,15 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(0, lambda: self._show_about(check=True))
         else:
             self._update_scheduler.tick()
+
+    def _open_categories(self) -> None:
+        dialog = CategoryManagerDialog(self._settings, self._theme, self)
+        try:
+            dialog.exec()
+        finally:
+            dialog.deleteLater()
+        self._refresh_custom_categories()
+        self._refresh_page_state()
 
     def _open_browser_settings(self) -> None:
         self._raise_for_browser()
@@ -1703,7 +1768,10 @@ class MainWindow(QMainWindow):
 
         self._search.setVisible(self.width() >= 1200)
         self._content_stack.setCurrentWidget(self._downloads_page)
-        self._page_title.setText(_FILTER_TITLES.get(key, "All Downloads"))
+        if key.startswith(CUSTOM_CATEGORY_PREFIX):
+            self._page_title.setText(custom_category_name(key))
+        else:
+            self._page_title.setText(_FILTER_TITLES.get(key, "All Downloads"))
         visible = self._proxy.rowCount()
         total = len(items)
         search = self._search.text().strip()
@@ -1737,6 +1805,9 @@ class MainWindow(QMainWindow):
             subtitle = f"{visible} paused or stopped"
         elif key == "history":
             subtitle = f"{visible} finished transfer{'s' if visible != 1 else ''}"
+        elif key.startswith(CUSTOM_CATEGORY_PREFIX):
+            name = custom_category_name(key)
+            subtitle = f"{visible} file{'s' if visible != 1 else ''} in {name}"
         else:
             category = CATEGORY_FILTER_KEYS.get(key, "")
             subtitle = f"{visible} file{'s' if visible != 1 else ''} in {category}"
@@ -1769,8 +1840,26 @@ class MainWindow(QMainWindow):
 
     def _refresh_sidebar_counts(self, items: list[DownloadItem]) -> None:
         unread = self._unread_notifications()
-        self._sidebar.set_counts(_sidebar_counts(items, unread))
+        self._sidebar.set_counts(
+            _sidebar_counts(items, unread, self._custom_names)
+        )
         self._toolbar.set_notifications(unread)
+
+    def _refresh_custom_categories(self) -> None:
+        names = tuple(
+            str(entry.get("name", "")).strip()
+            for entry in getattr(self._settings, "custom_categories", [])
+            if isinstance(entry, dict) and str(entry.get("name", "")).strip()
+        )
+        if names == self._custom_names:
+            return
+        self._custom_names = names
+        current = self._sidebar.current_key
+        self._sidebar.set_custom_categories(names)
+        if current.startswith(CUSTOM_CATEGORY_PREFIX) and current in {
+            custom_category_key(name) for name in names
+        }:
+            self._sidebar.select(current)
 
     def _refresh_sidebar_badges(self) -> None:
         self._refresh_sidebar_counts(self._manager.items())
@@ -1787,13 +1876,30 @@ class MainWindow(QMainWindow):
         self._refresh_page_state()
 
     def _on_stats_changed(self, active: int, speed: float, queued: int) -> None:
-        self._status_bar.set_stats(active, speed, queued)
+        self._status_bar.set_stats(
+            active, speed, queued, self._manager.total_downloaded
+        )
         self._refresh_page_state()
 
     def _on_download_completed(self, item: DownloadItem) -> None:
         self._status_bar.show_message(
             f"Download complete — {_shorten(item.filename, 56)}"
         )
+        if not self._settings.show_completion_dialog:
+            return
+        if item.id in self._completion_dialogs:
+            return
+        dialog = DownloadCompleteDialog(
+            item, self._theme, self._settings, self
+        )
+        dialog.closed.connect(self._on_completion_dialog_closed)
+        self._completion_dialogs[item.id] = dialog
+        dialog.show()
+
+    def _on_completion_dialog_closed(self, download_id: str) -> None:
+        dialog = self._completion_dialogs.pop(download_id, None)
+        if dialog is not None:
+            dialog.deleteLater()
 
     def _on_download_failed(self, item: DownloadItem) -> None:
         self._status_bar.show_message(
@@ -1954,6 +2060,12 @@ class MainWindow(QMainWindow):
             except RuntimeError:
                 pass
         self._progress_dialogs.clear()
+        for dialog in list(self._completion_dialogs.values()):
+            try:
+                dialog.close()
+            except RuntimeError:
+                pass
+        self._completion_dialogs.clear()
         try:
             self._browser.stop()
         except Exception:
@@ -1964,7 +2076,9 @@ class MainWindow(QMainWindow):
 
 
 def _sidebar_counts(
-    items: list[DownloadItem], unread_notifications: int = 0
+    items: list[DownloadItem],
+    unread_notifications: int = 0,
+    custom_categories: tuple[str, ...] = (),
 ) -> dict[str, int]:
     counts = {
         "all": len(items),
@@ -1984,6 +2098,8 @@ def _sidebar_counts(
         "other": 0,
         "notifications": max(0, int(unread_notifications)),
     }
+    for name in custom_categories:
+        counts[custom_category_key(name)] = 0
     history_statuses = {
         DownloadStatus.COMPLETED,
         DownloadStatus.FAILED,
@@ -2005,6 +2121,11 @@ def _sidebar_counts(
         for key, category in CATEGORY_FILTER_KEYS.items():
             if item.category == category:
                 counts[key] += 1
+                break
+        folded = item.category.casefold()
+        for name in custom_categories:
+            if name.casefold() == folded:
+                counts[custom_category_key(name)] += 1
                 break
     return counts
 

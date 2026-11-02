@@ -236,8 +236,8 @@ PALETTES = {
 
 THEME_LABELS = {
     "classic": "Classic Light",
-    "light": "Light",
-    "dark": "Dark",
+    "light": "Modern Light",
+    "dark": "Modern Dark",
     "system": "Follow Windows",
 }
 
@@ -1286,6 +1286,15 @@ QLabel#SectionTitle {
     font-weight: 600;
     color: $text;
 }
+QLabel#CompletionBadge {
+    background-color: $success_soft;
+    border-radius: 26px;
+}
+QLabel#CompletionFileName {
+    font-size: 13px;
+    font-weight: 600;
+    color: $text;
+}
 QFrame#ThemeCard {
     background-color: $surface;
     border: 1px solid $border;
@@ -1536,6 +1545,10 @@ QLabel#StatusValue {
     font-weight: 600;
 }
 QLabel#StatusFaint {
+    color: $text_faint;
+    font-size: 12px;
+}
+QLabel#StatusTotal {
     color: $text_faint;
     font-size: 12px;
 }

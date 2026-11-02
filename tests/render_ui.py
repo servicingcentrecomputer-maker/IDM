@@ -21,6 +21,7 @@ from idm.core.settings import AppSettings
 from idm.models.download_item import DownloadStatus
 from idm.ui.dialogs.about import AboutDialog
 from idm.ui.dialogs.add_download import AddDownloadDialog
+from idm.ui.dialogs.complete import DownloadCompleteDialog
 from idm.ui.dialogs.options import OptionsDialog
 from idm.ui.dialogs.progress import DownloadProgressDialog
 from idm.ui.dialogs.queue import QueueDialog
@@ -134,6 +135,18 @@ def main() -> int:
     capture(progress, "native-progress-dark.png")
     progress.close()
     progress.deleteLater()
+    app.processEvents()
+
+    completion = DownloadCompleteDialog(completed, theme, settings, window)
+    completion.show()
+    completion.raise_()
+    app.processEvents()
+    capture(completion, "native-complete-dark.png")
+    theme.set_mode("classic")
+    app.processEvents()
+    capture(completion, "native-complete-classic.png")
+    completion.close()
+    completion.deleteLater()
     app.processEvents()
 
     theme.set_mode("classic")

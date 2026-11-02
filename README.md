@@ -6,19 +6,19 @@ layout while using an original icon set, an SQLite-backed history, a real HTTP
 download engine, pause/resume with HTTP Range, a queue, schedules and three
 interface themes.
 
-The current build is Version 3.6.0. It adds a fully working **Download File
-Info** dialog for manual and browser downloads: server metadata is inspected
-with HEAD and a Range GET fallback, the file name, folder and category can be
-edited before anything starts, categories can be created by the user, a folder
-can be remembered per category, an optional description is stored with the task,
-and the dialog offers real **Start Download**, **Download Later** and **Cancel**
-actions. A browser download opens in the same dialog; cancelling there resumes
-the original browser transfer instead of discarding it. The 3.5.0 interface
-redesign remains: a consistent, modern workspace built on a central design
-system with a collapsible navigation rail, live dashboard, virtualized download
-table with categories, video card grid, real Browser Assistant status, fourteen
-searchable Settings sections, a redesigned Update Center, light/dark/Follow-
-Windows themes and motion that respects the Windows reduced-motion preference.
+The current build is Version 3.6.1, a **Classic + Modern** interface release.
+The main window now pairs a compact classic IDM layout with the modern design
+system: File/Downloads/View/Tasks/Help menus, a toolbar with Add URL, Resume,
+Resume All, Stop, Stop All, Delete, Delete Completed, Options, Scheduler and
+Queue, a sidebar that includes user-created categories with live counts, a
+seven-column download table with a custom progress meter and status pills, and a
+status bar that reports active transfers, current speed and total downloaded
+data. A new **Download Complete** window shows the real average speed, finish
+time, size and source when a transfer ends. Classic Light, Modern Light and
+Modern Dark switch instantly without a restart. The 3.6.0 **Download File Info**
+dialog, real **Start Download**, **Download Later** and **Cancel** actions, the
+3.5.0 workspace pages (dashboard, video cards, Browser Assistant, Settings,
+Update Center) and the reduced-motion behaviour are all preserved.
 The complete application shell, the multi-connection segmented download engine
 and the browser integration are included. The engine supports HTTP Range
 transfers over up to 16 parallel connections, resumable segmented downloads that
@@ -57,9 +57,9 @@ available for testing on this machine.
 A packaged build is produced by the build automation:
 
 - Application: `dist\IDM\IDM.exe`
-- Installer: `dist-installer\IDM-Setup-3.6.0.exe`
+- Installer: `dist-installer\IDM-Setup-3.6.1.exe`
 
-Run `IDM-Setup-3.6.0.exe` to install IDM, create shortcuts, optionally start it with
+Run `IDM-Setup-3.6.1.exe` to install IDM, create shortcuts, optionally start it with
 Windows, and register it in Add/Remove Programs. The browser integration page
 offers one optional task per detected browser; selecting it registers the
 native messaging host for the current user. Extension ZIP packages are shipped
@@ -74,10 +74,10 @@ IDs and store publishing are covered in
 
 ### Release package
 
-The 3.6.0 deliverables are assembled in `release\IDM-3.6.0-win64\` and
-`release\IDM-3.6.0-win64.zip`: the portable application (`IDM.exe` with
+The 3.6.1 deliverables are assembled in `release\IDM-3.6.1-win64\` and
+`release\IDM-3.6.1-win64.zip`: the portable application (`IDM.exe` with
 `_internal\`, `IDM_Updater.exe` and `IDM_NativeHost.exe`),
-`IDM-Setup-3.6.0.exe`, the unpacked `BrowserExtension\IDMVideoAssistant\`,
+`IDM-Setup-3.6.1.exe`, the unpacked `BrowserExtension\IDMVideoAssistant\`,
 the extension archives, release notes, changelog, design-system guide, testing
 report and `SHA256SUMS.txt`. Source remains editable in the repository root.
 
@@ -188,7 +188,7 @@ Install it from the unpacked folder, or build its ZIP package:
 
 ```powershell
 .\.venv\Scripts\python.exe scripts\package_video_assistant.py
-# dist-extensions\IDM_Video_Assistant_3.6.0.zip, no CRX
+# dist-extensions\IDM_Video_Assistant_3.6.1.zip, no CRX
 ```
 
 Its [README](BrowserExtension/IDMVideoAssistant/README.md) and

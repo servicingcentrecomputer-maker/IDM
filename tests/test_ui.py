@@ -3,24 +3,27 @@
 from __future__ import annotations
 
 import time
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
 from PySide6.QtCore import QDateTime
 from PySide6.QtWidgets import QDialog
 
+from idm.constants import custom_category_key
 from idm.core.scheduler import SCHEDULE_ACTIONS
 from idm.core.settings import AppSettings
-from idm.models.download_item import DownloadStatus
+from idm.models.download_item import DownloadItem, DownloadStatus
 from idm.models.table_model import COLUMN_NAME, ITEM_ROLE
 from idm.ui import main_window as main_window_module
 from idm.ui.dialogs.about import AboutDialog
 from idm.ui.dialogs.add_download import AddDownloadDialog
+from idm.ui.dialogs.complete import DownloadCompleteDialog
 from idm.ui.dialogs.options import OptionsDialog
 from idm.ui.dialogs.progress import DownloadProgressDialog
 from idm.ui.dialogs.queue import QueueDialog
 from idm.ui.dialogs.scheduler import SchedulerDialog
-from idm.ui.main_window import MainWindow, _parse_download_list
+from idm.ui.main_window import MainWindow, _parse_download_list, _sidebar_counts
 from idm.ui.theme import ThemeManager
 
 ARTIFACTS = Path(__file__).resolve().parents[1] / "build" / "ui-check"
@@ -72,7 +75,9 @@ def test_main_window_shell_and_theme_toggle(qt_app, window):
         "resume_all",
         "pause",
         "stop",
+        "stop_all",
         "delete",
+        "delete_completed",
         "options",
         "scheduler",
         "queue",
@@ -85,7 +90,9 @@ def test_main_window_shell_and_theme_toggle(qt_app, window):
         "import",
         "export",
         "pause_all",
+        "stop_all",
         "delete_completed",
+        "categories",
         "docs",
         "about",
         "check_updates",
@@ -458,6 +465,90 @@ def test_export_import_round_trip(qt_app, server, window, tmp_path, monkeypatch)
     assert imported[0].filename == "exported.bin"
     assert imported[0].status == DownloadStatus.PAUSED
     manager.remove([imported[0].id])
+
+
+def test_completion_dialog_reports_real_details(qt_app, window, tmp_path):
+    item = DownloadItem(
+        url="https://example.com/report.pdf",
+        filename="report.pdf",
+        folder=str(tmp_path),
+        category="Documents",
+        total_bytes=65536,
+        downloaded_bytes=65536,
+        status=DownloadStatus.COMPLETED,
+        created_at=datetime.now() - timedelta(seconds=4),
+        completed_at=datetime.now(),
+    )
+    item.path.write_bytes(b"0" * 65536)
+
+    dialog = DownloadCompleteDialog(item, window._theme, window._settings, window)
+    dialog.show()
+    qt_app.processEvents()
+    assert dialog.isVisible()
+    assert dialog._name.text() == "report.pdf"
+    assert dialog._size.text() == "64.0 KB"
+    assert dialog._source.text() == "example.com"
+    assert dialog._speed.text().endswith("/s")
+    assert dialog._file_button.isEnabled()
+
+    window._settings.show_completion_dialog = True
+    dialog._remember.setChecked(False)
+    assert window._settings.show_completion_dialog is False
+    dialog.close()
+    dialog.deleteLater()
+    qt_app.processEvents()
+
+
+def test_completion_event_opens_and_cleans_up_dialog(qt_app, window, tmp_path):
+    item = DownloadItem(
+        url="https://example.com/archive.zip",
+        filename="archive.zip",
+        folder=str(tmp_path),
+        category="Compressed",
+        total_bytes=4096,
+        downloaded_bytes=4096,
+        status=DownloadStatus.COMPLETED,
+        completed_at=datetime.now(),
+    )
+    window._settings.show_completion_dialog = True
+    window._on_download_completed(item)
+    qt_app.processEvents()
+    assert item.id in window._completion_dialogs
+    dialog = window._completion_dialogs[item.id]
+    dialog.close()
+    qt_app.processEvents()
+    assert item.id not in window._completion_dialogs
+
+    window._settings.show_completion_dialog = False
+    window._on_download_completed(item)
+    qt_app.processEvents()
+    assert item.id not in window._completion_dialogs
+
+
+def test_custom_categories_appear_in_sidebar_and_filter(qt_app, window, tmp_path):
+    window._settings.update(
+        {"custom_categories": [{"name": "Books", "extensions": ["cbz"]}]}
+    )
+    window._refresh_custom_categories()
+    item = window._manager.add_download(
+        "https://example.com/novel.cbz",
+        "novel.cbz",
+        str(tmp_path),
+        category="Books",
+        start_immediately=False,
+    )
+    assert wait_until(qt_app, lambda: window._proxy.rowCount() == 1)
+
+    key = custom_category_key("Books")
+    assert "Books" in window._custom_names
+    window._sidebar.select(key, emit_signal=True)
+    qt_app.processEvents()
+    assert window._proxy.rowCount() == 1
+    assert window._page_title.text() == "Books"
+    counts = _sidebar_counts(window._manager.items(), 0, window._custom_names)
+    assert counts[key] == 1
+    window._manager.remove([item.id])
+    qt_app.processEvents()
 
 
 def test_parse_download_list_formats():

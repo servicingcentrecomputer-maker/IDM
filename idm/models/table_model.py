@@ -14,10 +14,10 @@ from PySide6.QtCore import (
 from PySide6.QtGui import QColor, QPalette
 from PySide6.QtWidgets import QApplication
 
-from ..constants import CATEGORY_FILTER_KEYS
+from ..constants import CATEGORY_FILTER_KEYS, custom_category_name
 from ..core.url_utils import (
+    format_date_added,
     format_eta,
-    format_last_try,
     format_progress_size,
     format_size,
     format_speed,
@@ -31,21 +31,21 @@ logger = logging.getLogger(__name__)
 
 COLUMN_NAME = 0
 COLUMN_SIZE = 1
-COLUMN_CATEGORY = 2
-COLUMN_STATUS = 3
-COLUMN_ETA = 4
-COLUMN_SPEED = 5
-COLUMN_LAST_TRY = 6
+COLUMN_STATUS = 2
+COLUMN_PROGRESS = 3
+COLUMN_SPEED = 4
+COLUMN_ETA = 5
+COLUMN_DATE_ADDED = 6
 COLUMN_COUNT = 7
 
 HEADERS = (
     "File Name",
     "Size",
-    "Category",
     "Status",
+    "Progress",
+    "Speed",
     "Time Left",
-    "Transfer Rate",
-    "Last Try",
+    "Date Added",
 )
 
 ITEM_ROLE = Qt.ItemDataRole.UserRole + 1
@@ -105,7 +105,7 @@ class DownloadTableModel(QAbstractTableModel):
                 COLUMN_SIZE,
                 COLUMN_ETA,
                 COLUMN_SPEED,
-                COLUMN_LAST_TRY,
+                COLUMN_DATE_ADDED,
             }:
                 return int(
                     Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
@@ -138,18 +138,18 @@ class DownloadTableModel(QAbstractTableModel):
                         item.downloaded_bytes, item.total_bytes, compact=True
                     )
                 return format_size(item.total_bytes)
-            if column == COLUMN_CATEGORY:
-                return item.category or "Other"
             if column == COLUMN_STATUS:
                 return item.status.value
+            if column == COLUMN_PROGRESS:
+                return _progress_text(item)
+            if column == COLUMN_SPEED:
+                return format_speed(item.speed) if item.is_active else "—"
             if column == COLUMN_ETA:
                 if item.status == DownloadStatus.COMPLETED:
                     return "—"
                 return format_eta(item.eta) if item.is_active else "—"
-            if column == COLUMN_SPEED:
-                return format_speed(item.speed) if item.is_active else "—"
-            if column == COLUMN_LAST_TRY:
-                return format_last_try(item.last_try)
+            if column == COLUMN_DATE_ADDED:
+                return format_date_added(item.created_at)
             return None
 
         if role == Qt.ItemDataRole.ToolTipRole:
@@ -167,25 +167,31 @@ class DownloadTableModel(QAbstractTableModel):
                 lines.append(
                     f"Size: {format_size(item.downloaded_bytes)} of {format_size(item.total_bytes)}"
                 )
+            lines.append(f"Added: {item.created_at:%Y-%m-%d %H:%M:%S}")
+            if item.completed_at:
+                lines.append(f"Completed: {item.completed_at:%Y-%m-%d %H:%M:%S}")
             if item.last_try:
                 lines.append(f"Last try: {item.last_try:%Y-%m-%d %H:%M:%S}")
             if item.error:
                 lines.append(f"<span style='color:#f87171'>{item.error}</span>")
             return "<br>".join(lines)
 
+        if role == Qt.ItemDataRole.TextAlignmentRole and column == COLUMN_PROGRESS:
+            return int(Qt.AlignmentFlag.AlignCenter)
+
         if role == Qt.ItemDataRole.TextAlignmentRole and column in {
             COLUMN_SIZE,
             COLUMN_ETA,
             COLUMN_SPEED,
+            COLUMN_DATE_ADDED,
         }:
             return int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
 
         if role == Qt.ItemDataRole.ForegroundRole and column in {
             COLUMN_SIZE,
-            COLUMN_CATEGORY,
             COLUMN_ETA,
             COLUMN_SPEED,
-            COLUMN_LAST_TRY,
+            COLUMN_DATE_ADDED,
         }:
             palette = QApplication.palette()
             return palette.color(QPalette.ColorRole.PlaceholderText)
@@ -244,23 +250,34 @@ class DownloadTableModel(QAbstractTableModel):
         self.endRemoveRows()
 
 
+def _progress_text(item: DownloadItem) -> str:
+    if item.status == DownloadStatus.COMPLETED:
+        return "100%"
+    fraction = item.progress
+    if fraction is None:
+        return "—"
+    return f"{round(fraction * 100)}%"
+
+
 def _sort_value(item: DownloadItem, column: int) -> Any:
     if column == COLUMN_NAME:
         return item.filename.casefold()
     if column == COLUMN_SIZE:
         return item.total_bytes if item.total_bytes is not None else -1
-    if column == COLUMN_CATEGORY:
-        return (item.category or "").casefold()
     if column == COLUMN_STATUS:
         return _STATUS_SORT_ORDER.get(item.status, 99)
+    if column == COLUMN_PROGRESS:
+        if item.status == DownloadStatus.COMPLETED:
+            return 1.0
+        return item.progress if item.progress is not None else -1.0
+    if column == COLUMN_SPEED:
+        return item.speed
     if column == COLUMN_ETA:
         if item.eta is None:
             return float("inf")
         return item.eta
-    if column == COLUMN_SPEED:
-        return item.speed
-    if column == COLUMN_LAST_TRY:
-        return item.last_try.timestamp() if item.last_try else 0.0
+    if column == COLUMN_DATE_ADDED:
+        return item.created_at.timestamp() if item.created_at else 0.0
     return ""
 
 
@@ -268,6 +285,7 @@ class DownloadFilterProxyModel(QSortFilterProxyModel):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self._filter_key = "all"
+        self._custom_category = ""
         self._search = ""
         self.setDynamicSortFilter(True)
         self.setSortRole(SORT_ROLE)
@@ -276,6 +294,7 @@ class DownloadFilterProxyModel(QSortFilterProxyModel):
     def set_filter_key(self, key: str) -> None:
         if key != self._filter_key:
             self._filter_key = key
+            self._custom_category = custom_category_name(key)
             self.beginFilterChange()
             self.endFilterChange()
 
@@ -308,6 +327,9 @@ class DownloadFilterProxyModel(QSortFilterProxyModel):
                 return False
         elif self._filter_key == "history":
             if item.status not in _HISTORY_FILTER_STATUSES:
+                return False
+        elif self._custom_category:
+            if (item.category or "").casefold() != self._custom_category.casefold():
                 return False
         elif (
             self._filter_key in CATEGORY_FILTER_KEYS

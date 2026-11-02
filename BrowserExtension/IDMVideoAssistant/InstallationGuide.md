@@ -6,7 +6,7 @@ no CRX file is used.
 
 ## Before you start
 
-- Install **IDM 3.6.0** and start it once.
+- Install **IDM 3.6.1** and start it once.
 - Use **Chrome 102+** or **Edge 102+**.
 - Decide which IDM browser extension you want in the profile. The basic
   **IDM Integration Module** and **IDM Video Assistant** share the pinned ID
@@ -24,7 +24,7 @@ application.
 
 ### Option A — IDM installer (recommended)
 
-1. Run `IDM-Setup-3.6.0.exe`.
+1. Run `IDM-Setup-3.6.1.exe`.
 2. On the optional tasks page, select:
    - **Integrate with Google Chrome**, and/or
    - **Integrate with Microsoft Edge**.
@@ -75,7 +75,7 @@ intended only for development.
 4. Select the folder that contains `manifest.json`, for example:
    - Source folder: `D:\IDM\BrowserExtension\IDMVideoAssistant`
    - Release folder: `D:\IDM\IDM_V3_Release\BrowserExtension\IDMVideoAssistant`
-5. The card should read **IDM Video Assistant 3.6.0** and show the ID
+5. The card should read **IDM Video Assistant 3.6.1** and show the ID
    `ljckgbgnolmopacdgmmgaijleadcmpgn`.
 6. Click the puzzle-piece icon and pin **IDM Video Assistant** to the toolbar.
 
@@ -88,7 +88,7 @@ All**), then select the extracted folder. Chrome cannot load a ZIP directly.
 2. Turn on **Developer mode** (left sidebar).
 3. Click **Load unpacked**.
 4. Select the same folder as above.
-5. Confirm the name, version `3.6.0` and ID `ljckgbgnolmopacdgmmgaijleadcmpgn`.
+5. Confirm the name, version `3.6.1` and ID `ljckgbgnolmopacdgmmgaijleadcmpgn`.
 6. Pin the extension from the Extensions menu.
 
 The **Allow extensions from other stores** switch is only needed for Chrome Web

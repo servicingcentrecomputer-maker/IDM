@@ -6,7 +6,7 @@ from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel
 
 from ..constants import APP_VERSION
-from ..core.url_utils import format_speed
+from ..core.url_utils import format_size, format_speed
 from .theme import ThemeManager
 
 
@@ -17,6 +17,7 @@ class StatusBar(QFrame):
         self._active = 0
         self._speed = 0.0
         self._queued = 0
+        self._total = 0
         self.setObjectName("StatusBar")
         self.setFixedHeight(30)
 
@@ -35,6 +36,13 @@ class StatusBar(QFrame):
         self._speed_label = QLabel()
         self._speed_label.setObjectName("StatusValue")
         layout.addWidget(self._speed_label)
+
+        self._total_label = QLabel()
+        self._total_label.setObjectName("StatusTotal")
+        self._total_label.setToolTip(
+            "Total data downloaded by IDM across all transfers"
+        )
+        layout.addWidget(self._total_label)
 
         layout.addStretch(1)
 
@@ -58,10 +66,13 @@ class StatusBar(QFrame):
         theme.changed.connect(self._refresh)
         self._refresh()
 
-    def set_stats(self, active: int, speed: float, queued: int) -> None:
+    def set_stats(
+        self, active: int, speed: float, queued: int, total_downloaded: int = 0
+    ) -> None:
         self._active = active
         self._speed = speed
         self._queued = queued
+        self._total = max(0, int(total_downloaded))
         self._refresh()
 
     def _refresh(self) -> None:
@@ -84,6 +95,11 @@ class StatusBar(QFrame):
             self._speed_label.show()
         else:
             self._speed_label.hide()
+        if self._total > 0:
+            self._total_label.setText(f"{format_size(self._total)} downloaded")
+            self._total_label.show()
+        else:
+            self._total_label.hide()
 
     def show_message(self, text: str, timeout_ms: int = 5000) -> None:
         self._message.setText(text)

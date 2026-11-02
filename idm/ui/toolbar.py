@@ -66,7 +66,9 @@ class DownloadToolbar(QFrame):
     resume_all_requested = Signal()
     pause_requested = Signal()
     stop_requested = Signal()
+    stop_all_requested = Signal()
     delete_requested = Signal()
+    delete_completed_requested = Signal()
     options_requested = Signal()
     scheduler_requested = Signal()
     queue_requested = Signal()
@@ -103,12 +105,12 @@ class DownloadToolbar(QFrame):
         brand_text = QVBoxLayout()
         brand_text.setContentsMargins(0, 0, 0, 0)
         brand_text.setSpacing(0)
-        app_name = QLabel("IDM")
-        app_name.setObjectName("BrandName")
-        tagline = QLabel("DOWNLOAD MANAGER")
-        tagline.setObjectName("BrandTagline")
-        brand_text.addWidget(app_name)
-        brand_text.addWidget(tagline)
+        self._brand_name = QLabel("IDM")
+        self._brand_name.setObjectName("BrandName")
+        self._brand_tagline = QLabel("DOWNLOAD MANAGER")
+        self._brand_tagline.setObjectName("BrandTagline")
+        brand_text.addWidget(self._brand_name)
+        brand_text.addWidget(self._brand_tagline)
 
         brand = QHBoxLayout()
         brand.setContentsMargins(4, 0, 14, 0)
@@ -138,7 +140,21 @@ class DownloadToolbar(QFrame):
         )
         self._add_button("pause", "Pause", "pause", "Pause selected downloads (Ctrl+P)", layout)
         self._add_button("stop", "Stop", "stop", "Stop selected downloads (Ctrl+Shift+S)", layout)
+        self._add_button(
+            "stop_all",
+            "Stop All",
+            "stop_all",
+            "Stop every active download",
+            layout,
+        )
         self._add_button("delete", "Delete", "delete", "Remove selected downloads (Del)", layout)
+        self._add_button(
+            "delete_completed",
+            "Delete Completed",
+            "delete_completed",
+            "Clear completed downloads from the list (Ctrl+Shift+Delete)",
+            layout,
+        )
         layout.addWidget(self._separator())
         self._add_button("queue", "Queue", "queue", "Manage the download queue (Ctrl+Shift+Q)", layout)
         self._add_button(
@@ -192,7 +208,11 @@ class DownloadToolbar(QFrame):
         self.buttons["resume_all"].clicked.connect(self.resume_all_requested)
         self.buttons["pause"].clicked.connect(self.pause_requested)
         self.buttons["stop"].clicked.connect(self.stop_requested)
+        self.buttons["stop_all"].clicked.connect(self.stop_all_requested)
         self.buttons["delete"].clicked.connect(self.delete_requested)
+        self.buttons["delete_completed"].clicked.connect(
+            self.delete_completed_requested
+        )
         self.buttons["options"].clicked.connect(self.options_requested)
         self.buttons["scheduler"].clicked.connect(self.scheduler_requested)
         self.buttons["queue"].clicked.connect(self.queue_requested)
@@ -261,6 +281,10 @@ class DownloadToolbar(QFrame):
     def set_notifications(self, count: int) -> None:
         self.notifications_button.set_count(count)
 
+    def set_compact(self, compact: bool) -> None:
+        self._brand_tagline.setVisible(not compact)
+        self.search_field.setFixedWidth(200 if compact else 260)
+
     def update_actions(
         self,
         can_pause: bool,
@@ -269,10 +293,12 @@ class DownloadToolbar(QFrame):
         can_delete: bool,
         can_delete_completed: bool = False,
         can_resume_all: bool = False,
+        can_stop_all: bool = False,
     ) -> None:
-        del can_delete_completed
         self.buttons["pause"].setEnabled(can_pause)
         self.buttons["resume"].setEnabled(can_resume)
         self.buttons["resume_all"].setEnabled(can_resume_all)
         self.buttons["stop"].setEnabled(can_stop)
+        self.buttons["stop_all"].setEnabled(can_stop_all)
         self.buttons["delete"].setEnabled(can_delete)
+        self.buttons["delete_completed"].setEnabled(can_delete_completed)

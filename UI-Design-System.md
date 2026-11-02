@@ -1,7 +1,7 @@
 # IDM UI Design System
 
-Version 3.6.0 ships one design system shared by every IDM surface. The system
-has two layers:
+Version 3.6.1 ships one design system shared by the classic and modern IDM
+surfaces. The system has two layers:
 
 1. **Design tokens** — framework-light values in `idm/ui/design.py`, consumed
    by Qt style sheets and custom-painted widgets.
@@ -14,7 +14,8 @@ reduced-motion settings stay consistent without per-widget special cases.
 
 ## Identity
 
-The 3.6.0 identity is deep navy and azure. The mark is an original squircle
+The 3.6.1 identity is deep navy and azure in the modern themes and crisp blue
+on light gray in Classic. The mark is an original squircle
 with an azure gradient, a light ring and a white download glyph; it is used at
 every size from 16 px window icons to the installer wizard. Toolbar and
 navigation actions use monochrome line glyphs from the same SVG vocabulary,
@@ -29,32 +30,32 @@ anchor against light and dark chrome.
 | `light` | Cool blue-white surfaces, deep ink text and azure accents. |
 | `dark` | Deep navy surfaces, layered borders and brighter azure accents. |
 | `system` | Follows the Windows app theme and refreshes when it changes. |
-| `classic` | Compact legacy palette for the original look. |
+| `classic` | Light gray workspace with crisp white surfaces, near-black text and an IDM-style blue accent. |
 
 Switching a theme rebuilds the QSS, recolours toolbar icons, updates custom
 painters and repaints every page immediately. No restart is required.
 
 ### Core colour roles
 
-| Role | Light | Dark |
-| --- | --- | --- |
-| Background | `#F1F4FA` | `#080D18` |
-| Surface | `#FFFFFF` | `#0E1626` |
-| Card | `#FFFFFF` | `#101A2B` |
-| Border | `#DDE4F0` | `#22314B` |
-| Text | `#0E1726` | `#E9F0FC` |
-| Muted text | `#526079` | `#9DAEC8` |
-| Faint text | `#7E8AA0` | `#66788F` |
-| Accent | `#1D5BEA` | `#4D8DFF` |
-| Accent soft | `#EDF2FF` | `#14284B` |
-| Accent gradient | `#3F7DFF → #1D5BEA → #1743C2` | `#3F7BFF → #1D5BEA → #123A9E` |
-| Success | `#0E9F6E` | `#3DD6A0` |
-| Warning | `#B26B00` | `#F2B45E` |
-| Danger | `#D64545` | `#FF7B7B` |
-| Sidebar | `#F8FAFE` | `#0A1220` |
-| Selection | `#E7EEFF` | `#15294A` |
-| Track | `#E4EAF5` | `#1E2B42` |
-| Focus ring | `#B9CDFF` | `#2C4E88` |
+| Role | Classic | Light | Dark |
+| --- | --- | --- | --- |
+| Background | `#F2F2F2` | `#F1F4FA` | `#080D18` |
+| Surface | `#FFFFFF` | `#FFFFFF` | `#0E1626` |
+| Card | `#FFFFFF` | `#FFFFFF` | `#101A2B` |
+| Border | `#D5DDE5` | `#DDE4F0` | `#22314B` |
+| Text | `#202020` | `#0E1726` | `#E9F0FC` |
+| Muted text | `#586571` | `#526079` | `#9DAEC8` |
+| Faint text | `#8A96A2` | `#7E8AA0` | `#66788F` |
+| Accent | `#1683D8` | `#1D5BEA` | `#4D8DFF` |
+| Accent soft | `#E7F2FB` | `#EDF2FF` | `#14284B` |
+| Accent gradient | `#1A8FE3 → #0E64AA` | `#3F7DFF → #1D5BEA → #1743C2` | `#3F7BFF → #1D5BEA → #123A9E` |
+| Success | `#1C8F5A` | `#0E9F6E` | `#3DD6A0` |
+| Warning | `#B9791A` | `#B26B00` | `#F2B45E` |
+| Danger | `#C94343` | `#D64545` | `#FF7B7B` |
+| Sidebar | `#FFFFFF` | `#F8FAFE` | `#0A1220` |
+| Selection | `#D8EBF9` | `#E7EEFF` | `#15294A` |
+| Track | `#E8EEF3` | `#E4EAF5` | `#1E2B42` |
+| Focus ring | `#9CC8EC` | `#B9CDFF` | `#2C4E88` |
 
 Every status colour is paired with a soft background and a text label, so
 colour is never the only signal.
@@ -166,19 +167,23 @@ Shadows are suppressed when motion or animation effects are disabled.
 | Icon buttons | 40 px toolbar targets and 30 px in-card targets; always carry a tooltip and accessible name. |
 | Inputs | 36 px height, `md` radius, accent focus ring. |
 | Toggles / checks | Accent fill with a white mark; no colour-only state. |
-| Tables | 64 px row rhythm, painted icon tile, gradient progress bar, status pill and aligned numeric columns. The Size column shows live `downloaded/total` (for example `8.3/64 MB`) while a transfer is active. |
+| Tables | 62 px row rhythm, painted file-type tile, file name with category subtitle, status pill, rounded progress meter with a right-aligned percentage and aligned numeric columns. The seven columns are File Name, Size, Status, Progress, Speed, Time Left and Date Added; Size shows live `downloaded/total` (for example `8.3/64 MB`) while a transfer is active. |
 | Tabs | Segmented pill bar with an accent-soft active state; each dialog tab scrolls independently when needed. |
 | Toasts | Bottom-right, stacked, auto-dismiss, never cover primary actions. |
 | Empty state | Icon, short explanation and a single recovery action. |
 | Video card | 128–144 px cinematic navy poster, quality/duration chips, metadata, gradient progress and a divided action row. |
 | Dashboard transfer row | 62 px minimum, category tile, live status colour, gradient progress and compact metadata. |
 | Download File Info dialog | Branded header with a 46 px gradient tile, eyebrow, title and transport badge; a scrollable body with the URL row, a gradient file hero card (56 px file-type tile, category pill, extension chip), a save-options card with icon-led category, file name, folder and description fields, and a compact server information card; fixed error line and a divided footer with Cancel, Download Later and the single primary Start Download. Unknown server values render as an em dash, never as invented text. After Start Download the same window switches to a compact live view with percentage, downloaded/total size in MB or GB, transfer rate, time left and status; it auto-closes on completion and closing early leaves the transfer running. |
+| Download Complete window | Non-modal 540 px card: 52 px success badge, title, file name, destination line, a two-column details card (average speed, completed, size, source host), a hint, then Open Folder, Close and the single primary Open File, with a persisted completion-window checkbox above the footer. Values come from the finished `DownloadItem`; missing paths disable Open File. |
+| Sidebar rows | 38 px rhythm, painted icon tile, label and right-aligned count pill; a 3 px accent bar marks the active destination. Custom categories use the same row and participate in counts, filtering and selection. |
+| Status bar | 30 px bar: activity dot, active/queued counts, live transfer rate, total downloaded data, transient message and the version readout. |
 
 ## Layout and responsiveness
 
 - Navigation rail: 240 px expanded, 68 px collapsed, 38 px item rhythm.
 - Toolbar: 72 px height with a 126×40 px primary action and 40×40 px icon
-  actions.
+  actions. Below 1320 px the toolbar switches to compact icon-only actions with
+  tooltips; below 1200 px the inline search field is hidden.
 - Content margins: 24 px sides, 20 px top, 16 px bottom; page columns use a
   3:2 split with 12 px gutters.
 - Minimum supported window: 1040×600. The shell, download workspace, dialogs

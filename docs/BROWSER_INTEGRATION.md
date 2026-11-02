@@ -48,7 +48,7 @@ stderr.
 
 ### Normal installation
 
-`IDM-Setup-3.6.0.exe` copies `IDM_NativeHost.exe` next to `IDM.exe` and offers one
+`IDM-Setup-3.6.1.exe` copies `IDM_NativeHost.exe` next to `IDM.exe` and offers one
 optional task per browser:
 
 - **Integrate with Google Chrome**

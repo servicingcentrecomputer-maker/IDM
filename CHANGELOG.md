@@ -3,15 +3,43 @@
 All notable changes to IDM are recorded here. Versions follow semantic
 versioning (`MAJOR.MINOR.PATCH`).
 
-## [Unreleased]
+## [3.6.1] — 2026-11-02
 
 ### Added
 
+- Classic + Modern application shell: **File**, **Downloads**, **View**,
+  **Tasks** and **Help** menus; a compact toolbar with Add URL, Resume, Resume
+  All, Stop, Stop All, Delete, Delete Completed, Options, Scheduler and Queue;
+  and a responsive icon-only mode below 1320 px.
+- Custom categories in the sidebar with live counts, table filtering and
+  selection preservation, plus **Tasks → Manage Categories**.
+- **Download Complete** window with real average speed, completion time, size
+  and source host, Open File / Open Folder actions and a persisted
+  “Show this window when a download completes” choice.
+- Total downloaded data across all records in the status bar.
 - Live MB/GB download readouts. After **Start Download** the Download File Info
   dialog stays open as a compact live view with the percentage, downloaded and
   total size, transfer rate, time left and status, and closes itself when the
   transfer finishes. The download list also shows the downloaded amount in its
   Size column (for example `8.3/64 MB`).
+
+### Changed
+
+- The download table now shows **File Name** (with category subtitle and
+  file-type icon), **Size**, **Status** pill, rounded **Progress** meter,
+  **Speed**, **Time Left** and **Date Added**, with the previous category
+  information preserved in the name subtitle and tooltip.
+- Classic Light, Modern Light and Modern Dark share one design-system token
+  set; switching applies instantly, persists, and covers every dialog and
+  status widget.
+- The status bar adds the downloaded-total readout and the current version;
+  the sidebar reuses the same icon and count styling as the modern pages.
+- Chrome, Edge, Firefox and Video Assistant manifests are version 3.6.1.
+
+### Fixed
+
+- The progress column renders the designed rounded meter in every theme; a
+  second, older delegate definition no longer overrides it.
 
 ## [3.6.0] — 2026-11-01
 

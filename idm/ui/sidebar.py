@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ..constants import APP_VERSION
+from ..constants import APP_VERSION, custom_category_key
 from . import design, icons
 from .theme import ThemeManager
 
@@ -41,12 +41,12 @@ _WORKSPACE_ITEMS = (
 )
 
 _LIBRARY_ITEMS = (
-    ("video_downloads", "Video Downloads", "video"),
     ("documents", "Documents", "file_text"),
-    ("images", "Images", "image"),
-    ("programs", "Programs", "app"),
     ("music", "Music", "music"),
+    ("videos", "Videos", "video"),
+    ("programs", "Programs", "app"),
     ("compressed", "Compressed Files", "archive"),
+    ("images", "Images", "image"),
 )
 
 _TOOL_ITEMS = (
@@ -217,6 +217,13 @@ class Sidebar(QFrame):
         self._library_list = self._create_list(_LIBRARY_ITEMS)
         content_layout.addWidget(self._library_list)
 
+        self._custom_label = self._add_section(
+            content_layout, "CUSTOM CATEGORIES"
+        )
+        self._custom_list = self._create_list(())
+        content_layout.addWidget(self._custom_label)
+        content_layout.addWidget(self._custom_list)
+
         content_layout.addWidget(self._add_section(content_layout, "TOOLS"))
         self._tool_list = self._create_list(_TOOL_ITEMS)
         content_layout.addWidget(self._tool_list)
@@ -249,9 +256,40 @@ class Sidebar(QFrame):
         theme.changed.connect(self._repaint)
         theme.changed.connect(self._refresh_icons)
         self.set_counts({})
+        self.set_custom_categories([])
 
-    def _lists(self) -> tuple[QListWidget, QListWidget, QListWidget]:
-        return (self._workspace_list, self._library_list, self._tool_list)
+    def _lists(self) -> tuple[QListWidget, ...]:
+        return (
+            self._workspace_list,
+            self._library_list,
+            self._custom_list,
+            self._tool_list,
+        )
+
+    def set_custom_categories(self, names) -> None:
+        names = [str(name).strip() for name in names if str(name).strip()]
+        self._custom_list.clear()
+        for name in names:
+            item = QListWidgetItem(name)
+            item.setData(KEY_ROLE, custom_category_key(name))
+            item.setData(ICON_ROLE, "folder")
+            item.setSizeHint(QSize(0, _ITEM_HEIGHT))
+            item.setToolTip(name)
+            self._custom_list.addItem(item)
+        has_categories = bool(names)
+        self._custom_label.setVisible(has_categories)
+        self._custom_list.setVisible(has_categories)
+        self._custom_list.setFixedHeight(
+            len(names) * _ITEM_HEIGHT + 6 if names else 0
+        )
+        self.set_counts({})
+        if self._current_key.startswith("custom:"):
+            keys = {
+                str(self._custom_list.item(row).data(KEY_ROLE))
+                for row in range(self._custom_list.count())
+            }
+            if self._current_key not in keys:
+                self.select("all", emit_signal=True)
 
     def _add_section(self, layout: QVBoxLayout, text: str) -> QLabel:
         label = QLabel(text)

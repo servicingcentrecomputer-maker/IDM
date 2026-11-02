@@ -145,6 +145,10 @@ class DownloadManager(QObject):
         return sum(1 for item in self._items.values() if item.is_active)
 
     @property
+    def total_downloaded(self) -> int:
+        return sum(max(0, item.downloaded_bytes) for item in self._items.values())
+
+    @property
     def total_speed(self) -> float:
         return sum(item.speed for item in self._items.values() if item.is_active)
 

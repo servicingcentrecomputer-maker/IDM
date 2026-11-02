@@ -13,7 +13,7 @@ APP_AUTHOR = "IDM"
 APP_COPYRIGHT = "Copyright (C) 2026 IDM. All rights reserved."
 
 # Semantic versioning: MAJOR.MINOR.PATCH (optionally -prerelease).
-CURRENT_VERSION = "3.6.0"
+CURRENT_VERSION = "3.6.1"
 
 # Backwards-compatible aliases used throughout the application.
 APP_VERSION = CURRENT_VERSION

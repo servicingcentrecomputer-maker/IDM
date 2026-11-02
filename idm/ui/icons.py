@@ -39,6 +39,10 @@ _SVG_BODIES: dict[str, str] = {
         '<rect x="19" y="5" width="2.6" height="14" rx="1.1" fill="{color}" stroke="none"/>'
     ),
     "stop": '<rect x="7" y="7" width="10" height="10" rx="2" fill="{color}" stroke="none"/>',
+    "stop_all": (
+        '<rect x="4.5" y="7" width="6.5" height="10" rx="1.6" fill="{color}" stroke="none"/>'
+        '<rect x="13" y="7" width="6.5" height="10" rx="1.6" fill="{color}" stroke="none"/>'
+    ),
     "delete": (
         '<path d="M4 7h16"/><path d="M9 7V4.8a.8.8 0 0 1 .8-.8h4.4a.8.8 0 0 1 .8.8V7"/>'
         '<path d="M6.5 7l.8 12.2a1.8 1.8 0 0 0 1.8 1.8h5.8a1.8 1.8 0 0 0 1.8-1.8L17.5 7"/>'
@@ -238,7 +242,9 @@ _TOOLBAR_FALLBACK = {
     "resume_all": ("resume_all", "#2F9E63"),
     "pause": ("pause", "#D99A28"),
     "stop": ("stop", "#C94343"),
+    "stop_all": ("stop_all", "#C94343"),
     "delete": ("delete", "#C94343"),
+    "delete_completed": ("delete_completed", "#C94343"),
     "options": ("options", "#5B6B80"),
     "scheduler": ("scheduler", "#1683D8"),
     "queue": ("queue", "#4B7399"),

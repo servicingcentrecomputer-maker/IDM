@@ -16,17 +16,22 @@ from PySide6.QtWidgets import (
 )
 
 from ..models.table_model import (
-    COLUMN_CATEGORY,
     COLUMN_COUNT,
+    COLUMN_DATE_ADDED,
     COLUMN_ETA,
-    COLUMN_LAST_TRY,
     COLUMN_NAME,
+    COLUMN_PROGRESS,
     COLUMN_SIZE,
     COLUMN_SPEED,
     COLUMN_STATUS,
 )
 from . import icons
-from .delegates import NameDelegate, StatusDelegate, ValueDelegate
+from .delegates import (
+    NameDelegate,
+    ProgressDelegate,
+    StatusDelegate,
+    ValueDelegate,
+)
 from .theme import ThemeManager
 
 
@@ -72,13 +77,13 @@ class DownloadTable(QTableView):
 
         self.setItemDelegateForColumn(COLUMN_NAME, NameDelegate(theme, self))
         self.setItemDelegateForColumn(COLUMN_STATUS, StatusDelegate(theme, self))
+        self.setItemDelegateForColumn(COLUMN_PROGRESS, ProgressDelegate(theme, self))
         value_delegate = ValueDelegate(theme, self)
         for column in (
             COLUMN_SIZE,
-            COLUMN_CATEGORY,
-            COLUMN_ETA,
             COLUMN_SPEED,
-            COLUMN_LAST_TRY,
+            COLUMN_ETA,
+            COLUMN_DATE_ADDED,
         ):
             self.setItemDelegateForColumn(column, value_delegate)
 
@@ -89,12 +94,12 @@ class DownloadTable(QTableView):
         header = self.horizontalHeader()
         header.setSectionResizeMode(COLUMN_NAME, QHeaderView.ResizeMode.Stretch)
         widths = {
-            COLUMN_SIZE: 92,
-            COLUMN_CATEGORY: 104,
-            COLUMN_STATUS: 124,
-            COLUMN_ETA: 100,
-            COLUMN_SPEED: 112,
-            COLUMN_LAST_TRY: 132,
+            COLUMN_SIZE: 88,
+            COLUMN_STATUS: 116,
+            COLUMN_PROGRESS: 112,
+            COLUMN_SPEED: 100,
+            COLUMN_ETA: 88,
+            COLUMN_DATE_ADDED: 118,
         }
         for column, width in widths.items():
             self.setColumnWidth(column, width)

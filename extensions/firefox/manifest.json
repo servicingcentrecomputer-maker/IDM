@@ -2,7 +2,7 @@
   "manifest_version": 2,
   "name": "IDM Integration Module",
   "short_name": "IDM",
-  "version": "3.6.0",
+  "version": "3.6.1",
   "description": "Send downloads to Internet Download Manager with one click.",
   "browser_specific_settings": {
     "gecko": {

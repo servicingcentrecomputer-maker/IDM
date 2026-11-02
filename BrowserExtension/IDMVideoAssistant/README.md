@@ -1,4 +1,4 @@
-# IDM Video Assistant 3.6.0
+# IDM Video Assistant 3.6.1
 
 A Chrome / Microsoft Edge Manifest V3 extension that finds direct media links on
 the page you are viewing, shows their metadata, and sends an authorised link to
@@ -62,7 +62,7 @@ or run shell commands.
 ## Requirements
 
 - Google Chrome 102+ or Microsoft Edge 102+.
-- IDM 3.6.0 running locally.
+- IDM 3.6.1 running locally.
 - The `com.idm.native` native messaging host registered for the browser you use.
   The IDM installer can do this, or you can run the registration script from a
   source checkout.
@@ -234,6 +234,6 @@ it first, then use **Load unpacked**.
 ```
 
 The deterministic archive is written to
-`dist-extensions\IDM_Video_Assistant_3.6.0.zip` with `manifest.json` at its root,
+`dist-extensions\IDM_Video_Assistant_3.6.1.zip` with `manifest.json` at its root,
 and the SHA-256 digest is printed. The ZIP contains the unpacked extension,
 including this README and the installation guide.

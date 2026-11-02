@@ -20,7 +20,6 @@ from PySide6.QtWidgets import (
     QStyleOptionViewItem,
 )
 
-from ..core.url_utils import format_progress_size
 from ..models.download_item import DownloadStatus
 from ..models.table_model import ITEM_ROLE
 from . import icons
@@ -138,64 +137,106 @@ class NameDelegate(_BaseDelegate):
             elided_name,
         )
 
+        detail = item.category or "Other"
+        if item.description:
+            detail = f"{detail}   ·   {item.description}"
+        elif item.source_browser:
+            detail = f"{detail}   ·   via {item.source_browser.capitalize()}"
+
+        meta_font = QFont(option.font)
+        meta_font.setPointSizeF(max(8.0, option.font.pointSizeF() - 0.8))
+        meta_metrics = QFontMetrics(meta_font)
+        painter.setFont(meta_font)
+        painter.setPen(muted_color)
+        meta_rect = QRect(text_left, icon_box.top() + 25, text_width, 18)
+        painter.drawText(
+            meta_rect,
+            int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
+            meta_metrics.elidedText(
+                detail, Qt.TextElideMode.ElideRight, text_width
+            ),
+        )
+
+        self._paint_separator(painter, option)
+        painter.restore()
+
+
+class ProgressDelegate(_BaseDelegate):
+    """Rounded progress meter with a right-aligned percentage."""
+
+    def paint(self, painter: QPainter, option: QStyleOptionViewItem, index: QModelIndex) -> None:
+        item = index.data(ITEM_ROLE)
+        if item is None:
+            super().paint(painter, option, index)
+            return
+
+        painter.save()
+        self._paint_background(painter, option, index)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        p = self._theme.palette
+
         fraction = item.progress
         if item.status == DownloadStatus.COMPLETED:
             fraction = 1.0
-        label = f"{round((fraction or 0.0) * 100)}%"
-        if item.status == DownloadStatus.QUEUED:
-            label = "Queued"
-        elif item.status == DownloadStatus.COMPLETED:
-            label = "100%"
-        elif fraction is None and item.status in {
-            DownloadStatus.DOWNLOADING,
-            DownloadStatus.CONNECTING,
-            DownloadStatus.RETRYING,
-        }:
-            label = "…"
-
-        label_font = QFont(option.font)
-        label_font.setPointSizeF(max(8.0, option.font.pointSizeF() - 0.8))
-        label_metrics = QFontMetrics(label_font)
-        size_text = format_progress_size(
-            item.downloaded_bytes, item.total_bytes, compact=True
+        selected = self._is_selected(option)
+        text_color = (
+            option.palette.color(QPalette.ColorRole.HighlightedText)
+            if selected
+            else QColor(p.text_muted)
         )
-        meta = f"{label}   ·   {size_text}" if size_text else label
-        meta_width = label_metrics.horizontalAdvance(meta)
-        if size_text and text_width - meta_width - 10 < 150:
-            meta = label
-            meta_width = label_metrics.horizontalAdvance(meta)
 
-        bar_width = max(0, text_width - meta_width - 10)
-        bar_rect = QRect(text_left, icon_box.top() + 27, bar_width, 6)
-        bar_color = QColor(p.track)
+        outer = option.rect.adjusted(10, 0, -12, 0)
+        font = QFont(option.font)
+        font.setPointSizeF(max(8.0, option.font.pointSizeF() - 0.6))
+        font.setWeight(QFont.Weight.DemiBold)
+        painter.setFont(font)
+        metrics = QFontMetrics(font)
+        label = "—" if fraction is None else f"{round(fraction * 100)}%"
+        label_width = metrics.horizontalAdvance("100%") + 4
 
+        bar_width = max(24, outer.width() - label_width - 10)
+        bar_rect = QRectF(
+            outer.left(), outer.center().y() - 3.0, bar_width, 6.0
+        )
         painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(bar_color)
-        painter.drawRoundedRect(QRectF(bar_rect), 3, 3)
-        if fraction and fraction > 0:
-            fill_width = max(0.0, bar_rect.width() * min(1.0, fraction))
-            if fill_width >= 1:
-                fill = QRectF(
-                    bar_rect.left(), bar_rect.top(), fill_width, bar_rect.height()
-                )
-                if item.status == DownloadStatus.FAILED:
-                    painter.setBrush(QColor(p.danger))
-                elif item.status in {DownloadStatus.PAUSED, DownloadStatus.STOPPED}:
-                    painter.setBrush(QColor(p.warning))
-                else:
-                    gradient = QLinearGradient(fill.topLeft(), fill.topRight())
-                    gradient.setColorAt(0.0, QColor(p.accent_hover))
-                    gradient.setColorAt(1.0, QColor(p.accent))
-                    painter.setBrush(gradient)
-                painter.drawRoundedRect(fill, 3, 3)
+        if selected:
+            track = QColor(option.palette.color(QPalette.ColorRole.HighlightedText))
+            track.setAlpha(58)
+        else:
+            track = QColor(p.track)
+        painter.setBrush(track)
+        painter.drawRoundedRect(bar_rect, 3, 3)
 
-        painter.setFont(label_font)
-        painter.setPen(muted_color)
-        meta_rect = QRect(text_left, bar_rect.top() - 6, text_width, 18)
+        if fraction and fraction > 0:
+            fill = QRectF(
+                bar_rect.left(),
+                bar_rect.top(),
+                max(1.0, bar_rect.width() * min(1.0, fraction)),
+                bar_rect.height(),
+            )
+            if item.status == DownloadStatus.FAILED:
+                painter.setBrush(QColor(p.danger))
+            elif item.status in {DownloadStatus.PAUSED, DownloadStatus.STOPPED}:
+                painter.setBrush(QColor(p.warning))
+            elif item.status == DownloadStatus.COMPLETED:
+                painter.setBrush(QColor(p.success))
+            else:
+                gradient = QLinearGradient(fill.topLeft(), fill.topRight())
+                gradient.setColorAt(0.0, QColor(p.accent_hover))
+                gradient.setColorAt(1.0, QColor(p.accent))
+                painter.setBrush(gradient)
+            painter.drawRoundedRect(fill, 3, 3)
+
+        painter.setPen(text_color)
         painter.drawText(
-            meta_rect,
+            QRect(
+                outer.right() - label_width,
+                option.rect.top(),
+                label_width,
+                option.rect.height(),
+            ),
             int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter),
-            meta,
+            label,
         )
 
         self._paint_separator(painter, option)
@@ -291,76 +332,6 @@ class TextDelegate(_BaseDelegate):
             rect,
             int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
             elided,
-        )
-
-        self._paint_separator(painter, option)
-        painter.restore()
-
-
-class ProgressDelegate(_BaseDelegate):
-    """Progress bar with a percentage label, used by the video table."""
-
-    def paint(self, painter: QPainter, option: QStyleOptionViewItem, index: QModelIndex) -> None:
-        item = index.data(ITEM_ROLE)
-        if item is None:
-            super().paint(painter, option, index)
-            return
-
-        painter.save()
-        self._paint_background(painter, option, index)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-        p = self._theme.palette
-
-        fraction = 1.0 if item.status == DownloadStatus.COMPLETED else (item.progress or 0.0)
-        if item.status == DownloadStatus.QUEUED:
-            label = "Queued"
-        else:
-            label = f"{round(fraction * 100)}%"
-        if self._is_selected(option):
-            label_color = option.palette.color(QPalette.ColorRole.HighlightedText)
-        else:
-            label_color = QColor(p.text_muted)
-
-        font = QFont(option.font)
-        font.setPointSizeF(max(8.0, option.font.pointSizeF() - 0.5))
-        painter.setFont(font)
-        label_width = QFontMetrics(font).horizontalAdvance("100%") + 8
-        bar = QRect(
-            option.rect.left() + 16,
-            option.rect.center().y() - 3,
-            max(10, option.rect.width() - label_width - 30),
-            6,
-        )
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QColor(p.track))
-        painter.drawRoundedRect(QRectF(bar), 3, 3)
-
-        if fraction > 0:
-            width = max(0.0, bar.width() * min(1.0, fraction))
-            if width >= 1:
-                fill_rect = QRectF(bar.left(), bar.top(), width, bar.height())
-                if item.status == DownloadStatus.FAILED:
-                    painter.setBrush(QColor(p.danger))
-                elif item.status in {DownloadStatus.PAUSED, DownloadStatus.STOPPED}:
-                    painter.setBrush(QColor(p.warning))
-                else:
-                    gradient = QLinearGradient(fill_rect.topLeft(), fill_rect.topRight())
-                    gradient.setColorAt(0.0, QColor(p.accent_hover))
-                    gradient.setColorAt(1.0, QColor(p.accent))
-                    painter.setBrush(gradient)
-                painter.drawRoundedRect(fill_rect, 3, 3)
-
-        painter.setPen(label_color)
-        label_rect = QRect(
-            bar.right() + 7,
-            option.rect.top(),
-            label_width,
-            option.rect.height(),
-        )
-        painter.drawText(
-            label_rect,
-            int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
-            label,
         )
 
         self._paint_separator(painter, option)

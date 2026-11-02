@@ -26,6 +26,9 @@ __all__ = [
     "CATEGORY_PROGRAMS",
     "CATEGORY_VIDEOS",
     "CURRENT_VERSION",
+    "CUSTOM_CATEGORY_PREFIX",
+    "custom_category_key",
+    "custom_category_name",
 ]
 
 APP_USER_AGENT = f"IDM/{APP_VERSION} (Windows NT 10.0; Win64; x64)"
@@ -88,6 +91,19 @@ EXTENSION_TO_CATEGORY = {
     for category, extensions in _EXTENSION_GROUPS.items()
     for extension in extensions
 }
+
+CUSTOM_CATEGORY_PREFIX = "custom:"
+
+
+def custom_category_key(name: str) -> str:
+    return f"{CUSTOM_CATEGORY_PREFIX}{name}"
+
+
+def custom_category_name(key: str) -> str:
+    if key.startswith(CUSTOM_CATEGORY_PREFIX):
+        return key[len(CUSTOM_CATEGORY_PREFIX):]
+    return ""
+
 
 CATEGORY_FILTER_KEYS = {
     "general": CATEGORY_GENERAL,

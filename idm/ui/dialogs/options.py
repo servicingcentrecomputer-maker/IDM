@@ -69,9 +69,11 @@ def _format_update_time(value: str) -> str:
 
 
 _THEME_DESCRIPTIONS = {
-    "classic": "Light grey chrome with the classic blue progress bars.",
-    "light": "Clean white panels and rounded modern controls.",
-    "dark": "A low-light palette for comfortable night use.",
+    "classic": (
+        "The original IDM look: compact grey chrome and classic blue meters."
+    ),
+    "light": "Bright Fluent surfaces, rounded controls and azure accents.",
+    "dark": "A deep navy Fluent palette for comfortable night use.",
     "system": "Automatically follows the Windows light or dark setting.",
 }
 
@@ -201,6 +203,7 @@ class OptionsDialog(BaseDialog):
 
         self.setWindowTitle("IDM Options")
         self.setMinimumSize(700, 540)
+        self.resize(940, 640)
         self.setSizeGripEnabled(False)
 
         root = QVBoxLayout(self)
@@ -289,6 +292,11 @@ class OptionsDialog(BaseDialog):
         )
         self.confirm_checkbox.setChecked(self._settings.confirm_delete)
         layout.addWidget(self.confirm_checkbox)
+        self.completion_checkbox = QCheckBox(
+            "Show the Download Complete window after a transfer finishes"
+        )
+        self.completion_checkbox.setChecked(self._settings.show_completion_dialog)
+        layout.addWidget(self.completion_checkbox)
         layout.addSpacing(10)
 
         layout.addWidget(make_label("STORAGE", "FieldLabel"))
@@ -944,6 +952,7 @@ class OptionsDialog(BaseDialog):
             "max_retries": self.retry_spin.value(),
             "speed_limit_kbps": self.speed_spin.value(),
             "confirm_delete": self.confirm_checkbox.isChecked(),
+            "show_completion_dialog": self.completion_checkbox.isChecked(),
             "start_immediately": self.start_checkbox.isChecked(),
             "restore_session": self.restore_checkbox.isChecked(),
             "show_toolbar": self.toolbar_check.isChecked(),
