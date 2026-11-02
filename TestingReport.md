@@ -116,11 +116,19 @@ on a clean Windows 10/11 machine or VM before publishing.
 
 ### Update manifest
 
-`update/latest.json` was deliberately **not** rewritten for 3.6.1: it still
-signed-advertises 3.6.0. An installed 3.6.1 is newer than the feed, so the Update
-Center offers no downgrade. Publishing 3.6.1 requires re-signing the manifest
-with the release Ed25519 key and publishing the new installer; see
-`docs/UPDATES.md`.
+`update/latest.json` now advertises 3.6.1 (release date 2026-11-02) with the
+published installer URL, `package_size` 62,466,466 and SHA-256
+`51b8f1f7b2faf304c6a12b30496ae8792dfdf48adde166b6fb79cb20d7fd501c`. It was
+re-signed with the release Ed25519 private key
+(`C:\Users\Jawad\.idm-signing\manifest-private.pem`); the public key derived
+from that key matches `MANIFEST_PUBLIC_KEY` in `config.py`.
+
+`scripts/validate_manifest.py update/latest.json --installer
+dist-installer/IDM-Setup-3.6.1.exe` reported `Manifest OK`, `signature:
+verified (Ed25519)` and `Installer OK` with matching size and hash. The
+automatic download-and-install path from an older installed version was not
+exercised on this machine; validate it on a clean Windows 10/11 VM before
+advertising the update.
 
 ## Database and user data
 

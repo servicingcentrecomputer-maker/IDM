@@ -1,20 +1,20 @@
 {
   "app_name": "IDM",
   "channel": "stable",
-  "latest_version": "3.6.0",
+  "latest_version": "3.6.1",
   "minimum_supported_version": "1.0.0",
-  "release_date": "2026-11-01",
+  "release_date": "2026-11-02",
   "release_notes": [
-    "Redesigned Download File Info dialog with a Windows 11-style branded header, file hero card, icon-led fields, server information card and an animated Start Download action.",
-    "Working Download File Info dialog for manual and browser downloads, with category detection, editable file name and folder, a remembered folder per category, an optional description and honest server metadata.",
-    "HEAD metadata with an aborting Range GET fallback reports size, type, last modified, resume support and server status without downloading the file.",
-    "Start Download, Download Later and Cancel are real actions; later tasks persist in the queue across restarts and start from the Queue Manager.",
-    "Browser downloads open the same dialog and the browser copy is cancelled only after IDM creates the task; cancelling resumes the original browser download.",
-    "Database schema v5 adds description and start_later after a verified backup; existing downloads, settings and partial files are preserved."
+    "Classic and Modern interface: a rebuilt main window with menu bar, compact toolbar, custom-category sidebar and a seven-column download table.",
+    "New Download Complete window with real average speed, completion time, final size, source host, Open File and Open Folder actions and a remembered display setting.",
+    "Three themes plus Follow Windows: Classic Light, Modern Light and Modern Dark switch instantly and the choice persists across restarts.",
+    "Live download list with a custom-painted progress meter, status chips, search, category filtering and a status bar showing active, queued, transfer rate and total data.",
+    "Custom categories created while adding a download or from Tasks > Manage Categories filter the table and keep their selection across edits.",
+    "Download engine, queue, scheduler, browser integration, settings and database schema 5 are unchanged; existing data needs no migration."
   ],
-  "download_url": "https://github.com/servicingcentrecomputer-maker/IDM/releases/download/v3.6.0/IDM-Setup-3.6.0.exe",
-  "sha256": "a725d44dd55423d73c317dd84d565f7ccc9b97bbed1419618e5dc53f0138e85a",
-  "package_size": 62441387,
+  "download_url": "https://github.com/servicingcentrecomputer-maker/IDM/releases/download/v3.6.1/IDM-Setup-3.6.1.exe",
+  "sha256": "51b8f1f7b2faf304c6a12b30496ae8792dfdf48adde166b6fb79cb20d7fd501c",
+  "package_size": 62466466,
   "mandatory": false,
-  "manifest_signature": "oZPY1R8g5ACKuPlKu5LN5JSRRnjK7zFv3SKboPVYJxLjcb1N87W3MUjEOMdHEpMEnCOtQwaqn/Ooes1BD0kQCQ=="
+  "manifest_signature": "fyHi0WX84QlP++EMfo+h1Mvu0+UzGxJ/u+0fzDJPkyzuegvDhDvcSnEzN89EUw0mgblgenYYFFOvtt0IlewoDw=="
 }

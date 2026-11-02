@@ -94,9 +94,9 @@ Options → Confirmations):
 
 ## Known limitations
 
-- The signed public update feed still advertises 3.6.0. It was intentionally not
-  rewritten or re-signed for this build; an installed 3.6.1 correctly sees that
-  it is newer and offers no downgrade.
+- The signed update feed advertises 3.6.1 with the published installer's real
+  SHA-256 and package size. The automatic download-and-install path from 3.6.0
+  was not re-run end-to-end in this session.
 - The installer is unsigned unless a CA-issued Authenticode certificate is
   configured; the signed manifest and SHA-256 remain the trust anchors.
 - Windows 10 is supported by the installer configuration but validation ran on
