@@ -11,6 +11,7 @@ release/
 IDM_V3_Release/
 .pytest_cache/
 .ruff_cache/
+.ui-preview/
 Backup/
 .idea/
 .vscode/

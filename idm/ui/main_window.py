@@ -762,15 +762,14 @@ class MainWindow(QMainWindow):
             manager=self._manager,
             submit_callback=create_task,
         )
-        try:
-            if dialog.exec() != AddDownloadDialog.DialogCode.Accepted:
-                return
-            values = dialog.values()
-            item = dialog.created_item
-        finally:
+        if dialog.exec() != AddDownloadDialog.DialogCode.Accepted:
             dialog.deleteLater()
+            return
+        values = dialog.values()
+        item = dialog.created_item
 
         if item is None:
+            dialog.deleteLater()
             QMessageBox.warning(
                 self, "Could not add download", "The download was not created."
             )
@@ -789,6 +788,10 @@ class MainWindow(QMainWindow):
                 f"Added “{_shorten(item.filename, 48)}” as paused."
             )
         self._select_item(item.id)
+        if values["start_immediately"]:
+            dialog.start_progress(item)
+        else:
+            dialog.deleteLater()
 
     def _resume_selected(self) -> None:
         items = self._selected_items()
@@ -971,12 +974,16 @@ class MainWindow(QMainWindow):
             manager=self._manager,
             submit_callback=submit,
         )
-        try:
-            if dialog.exec() != AddDownloadDialog.DialogCode.Accepted:
-                return None
-            return dialog.values(), dialog.created_item
-        finally:
+        if dialog.exec() != AddDownloadDialog.DialogCode.Accepted:
             dialog.deleteLater()
+            return None
+        values = dialog.values()
+        item = dialog.created_item
+        if item is not None and values.get("start_immediately"):
+            dialog.start_progress(item)
+        else:
+            dialog.deleteLater()
+        return values, item
 
     def _set_theme(self, mode: str) -> None:
         if mode not in THEME_ORDER:

@@ -166,13 +166,13 @@ Shadows are suppressed when motion or animation effects are disabled.
 | Icon buttons | 40 px toolbar targets and 30 px in-card targets; always carry a tooltip and accessible name. |
 | Inputs | 36 px height, `md` radius, accent focus ring. |
 | Toggles / checks | Accent fill with a white mark; no colour-only state. |
-| Tables | 64 px row rhythm, painted icon tile, gradient progress bar, status pill and aligned numeric columns. |
+| Tables | 64 px row rhythm, painted icon tile, gradient progress bar, status pill and aligned numeric columns. The Size column shows live `downloaded/total` (for example `8.3/64 MB`) while a transfer is active. |
 | Tabs | Segmented pill bar with an accent-soft active state; each dialog tab scrolls independently when needed. |
 | Toasts | Bottom-right, stacked, auto-dismiss, never cover primary actions. |
 | Empty state | Icon, short explanation and a single recovery action. |
 | Video card | 128–144 px cinematic navy poster, quality/duration chips, metadata, gradient progress and a divided action row. |
 | Dashboard transfer row | 62 px minimum, category tile, live status colour, gradient progress and compact metadata. |
-| Download File Info dialog | Branded header with a 46 px gradient tile, eyebrow, title and transport badge; a scrollable body with the URL row, a gradient file hero card (56 px file-type tile, category pill, extension chip), a save-options card with icon-led category, file name, folder and description fields, and a compact server information card; fixed error line and a divided footer with Cancel, Download Later and the single primary Start Download. Unknown server values render as an em dash, never as invented text. |
+| Download File Info dialog | Branded header with a 46 px gradient tile, eyebrow, title and transport badge; a scrollable body with the URL row, a gradient file hero card (56 px file-type tile, category pill, extension chip), a save-options card with icon-led category, file name, folder and description fields, and a compact server information card; fixed error line and a divided footer with Cancel, Download Later and the single primary Start Download. Unknown server values render as an em dash, never as invented text. After Start Download the same window switches to a compact live view with percentage, downloaded/total size in MB or GB, transfer rate, time left and status; it auto-closes on completion and closing early leaves the transfer running. |
 
 ## Layout and responsiveness
 
@@ -187,7 +187,8 @@ Shadows are suppressed when motion or animation effects are disabled.
 - The Download File Info dialog opens at 800×920 where space allows, clamps to
   the available screen minus 80 px, hides its footer hint below 720 px and
   scrolls its body from a 640×560 floor so the footer actions stay reachable on
-  small displays.
+  small displays. Its live progress mode switches to a compact 640×430 window
+  (560×380 floor) centred on the main window.
 - All sizes are device-independent pixels; Qt handles Windows scaling.
 - Tables virtualize rows; video and card pages create widgets only for
   visible items and cache them.

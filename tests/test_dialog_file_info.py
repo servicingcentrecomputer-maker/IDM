@@ -10,7 +10,10 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QDialog, QScrollArea
 
 from idm.core.settings import AppSettings
+from idm.core.url_utils import format_progress_size
 from idm.engine.manager import DownloadManager
+from idm.models.download_item import DownloadItem, DownloadStatus
+from idm.models.table_model import COLUMN_SIZE, DownloadTableModel
 from idm.ui.dialogs.download_file_info import AddDownloadDialog
 from idm.ui.theme import ThemeManager
 
@@ -349,3 +352,103 @@ def test_restricted_platform_disables_actions(qt_app, settings, theme) -> None:
         assert dialog.probe_label.property("state") == "warn"
     finally:
         dialog.deleteLater()
+
+
+def test_progress_size_formats_live_bytes() -> None:
+    assert format_progress_size(8_738_133, 67_108_864) == "8.3 MB of 64.0 MB"
+    assert (
+        format_progress_size(8_738_133, 67_108_864, compact=True) == "8.3/64 MB"
+    )
+    assert format_progress_size(67_108_864, 67_108_864, compact=True) == "64 MB"
+    assert format_progress_size(0, 67_108_864, compact=True) == "0/64 MB"
+    assert format_progress_size(0, None) == ""
+    assert format_progress_size(1536, None) == "1.5 KB"
+
+
+def test_size_column_shows_live_downloaded_bytes(qt_app, settings, manager) -> None:
+    item = DownloadItem(
+        url="https://example.com/archive.rar",
+        filename="archive.rar",
+        folder=str(settings.download_dir),
+        category="Compressed",
+        status=DownloadStatus.DOWNLOADING,
+        total_bytes=64 * 1024 * 1024,
+        downloaded_bytes=8 * 1024 * 1024,
+    )
+    model = DownloadTableModel(manager)
+    model._items = [item]
+    index = model.index(0, COLUMN_SIZE)
+    assert model.data(index, Qt.ItemDataRole.DisplayRole) == "8/64 MB"
+    item.downloaded_bytes = item.total_bytes
+    item.status = DownloadStatus.COMPLETED
+    assert model.data(index, Qt.ItemDataRole.DisplayRole) == "64.0 MB"
+
+
+def test_dialog_switches_to_live_progress_after_start(
+    qt_app, settings, theme, manager, server
+) -> None:
+    item = manager.add_download(
+        server.url("/slow/16777216"),
+        "archive.rar",
+        str(settings.download_dir),
+        category="Compressed",
+    )
+    dialog = AddDownloadDialog(
+        settings,
+        theme,
+        initial_url=item.url,
+        initial_filename=item.filename,
+        manager=manager,
+    )
+    dialog.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
+    dialog.show()
+    try:
+        dialog.start_progress(item)
+        assert dialog.progress_mode is True
+        assert dialog._body_scroll.isHidden()
+        assert dialog._progress_view.isVisible()
+        assert dialog.start_button.isHidden()
+        assert dialog.later_button.isHidden()
+
+        assert wait_until(qt_app, lambda: item.downloaded_bytes > 0)
+        dialog._apply_progress(item)
+        assert "%" in dialog._progress_percent.text()
+        assert "of" in dialog._progress_size.text()
+        assert dialog.cancel_button.text() == "Cancel download"
+
+        manager.stop([item.id])
+        assert wait_until(qt_app, lambda: item.status == DownloadStatus.STOPPED)
+        dialog._apply_progress(item)
+        assert dialog._progress_state.text() == "Stopped"
+        assert dialog.cancel_button.text() == "Close"
+    finally:
+        dialog.close()
+
+
+def test_dialog_live_progress_completes_and_schedules_close(
+    qt_app, settings, theme, manager, server
+) -> None:
+    item = manager.add_download(
+        server.url("/file/4096"), "small.bin", str(settings.download_dir)
+    )
+    dialog = AddDownloadDialog(
+        settings,
+        theme,
+        initial_url=item.url,
+        initial_filename=item.filename,
+        manager=manager,
+    )
+    dialog.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
+    dialog.show()
+    try:
+        dialog.start_progress(item)
+        assert wait_until(
+            qt_app, lambda: item.status == DownloadStatus.COMPLETED
+        )
+        dialog._apply_progress(item)
+        assert dialog._progress_percent.text() == "100%"
+        assert dialog._progress_state.text() == "Completed"
+        assert dialog.cancel_button.text() == "Close"
+        assert dialog._progress_close_timer.isActive()
+    finally:
+        dialog.close()

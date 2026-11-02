@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QPlainTextEdit,
+    QProgressBar,
     QPushButton,
     QScrollArea,
     QVBoxLayout,
@@ -58,13 +59,17 @@ from ...core.settings import AppSettings
 from ...core.url_utils import (
     InvalidUrlError,
     extension_of,
+    format_eta,
+    format_progress_size,
     format_size,
+    format_speed,
     guess_filename,
     host_of,
     sanitize_filename,
     unique_filename,
     validate_url,
 )
+from ...models.download_item import DownloadItem, DownloadStatus
 from .. import design, icons
 from ..theme import ThemeManager
 from .categories import CategoryManagerDialog
@@ -154,6 +159,15 @@ class AddDownloadDialog(BaseDialog):
         self._last_icon_category: str | None = None
         self._icon_effect: QGraphicsOpacityEffect | None = None
         self._icon_animation: QPropertyAnimation | None = None
+        self._progress_mode = False
+        self._progress_item_id: str | None = None
+        self._progress_timer = QTimer(self)
+        self._progress_timer.setInterval(500)
+        self._progress_timer.timeout.connect(self._refresh_progress_from_manager)
+        self._progress_close_timer = QTimer(self)
+        self._progress_close_timer.setSingleShot(True)
+        self._progress_close_timer.setInterval(2800)
+        self._progress_close_timer.timeout.connect(self.close)
 
         self.setWindowTitle("Download File Info")
         self.setMinimumSize(640, 560)
@@ -194,7 +208,12 @@ class AddDownloadDialog(BaseDialog):
         body_layout.addWidget(self._build_options())
         body_layout.addWidget(self._build_information())
         scroll.setWidget(body)
+        self._body_scroll = scroll
         root.addWidget(scroll, 1)
+
+        self._progress_view = self._build_progress_view()
+        root.addWidget(self._progress_view, 1)
+        self._progress_view.hide()
 
         footer = QFrame()
         footer.setObjectName("DialogFooter")
@@ -257,7 +276,7 @@ class AddDownloadDialog(BaseDialog):
         self.description_edit.textChanged.connect(self._update_description_hint)
         self.start_button.clicked.connect(lambda: self._validate_and_accept(True))
         self.later_button.clicked.connect(lambda: self._validate_and_accept(False))
-        self.cancel_button.clicked.connect(self.reject)
+        self.cancel_button.clicked.connect(self._on_cancel_clicked)
 
         if settings.start_immediately:
             self.start_button.setDefault(True)
@@ -308,25 +327,101 @@ class AddDownloadDialog(BaseDialog):
 
         text = QVBoxLayout()
         text.setSpacing(design.SPACING["xxs"])
-        eyebrow = QLabel("NEW DOWNLOAD")
-        eyebrow.setObjectName("DialogEyebrow")
-        title = QLabel("Download File Info")
-        title.setObjectName("DialogTitle")
-        subtitle = QLabel(
+        self._header_eyebrow = QLabel("NEW DOWNLOAD")
+        self._header_eyebrow.setObjectName("DialogEyebrow")
+        self._header_title = QLabel("Download File Info")
+        self._header_title.setObjectName("DialogTitle")
+        self._header_subtitle = QLabel(
             "Review the file, choose where it goes, then start now or keep it "
             "for later."
         )
-        subtitle.setObjectName("DialogSubtitle")
-        subtitle.setWordWrap(True)
-        text.addWidget(eyebrow)
-        text.addWidget(title)
-        text.addWidget(subtitle)
+        self._header_subtitle.setObjectName("DialogSubtitle")
+        self._header_subtitle.setWordWrap(True)
+        text.addWidget(self._header_eyebrow)
+        text.addWidget(self._header_title)
+        text.addWidget(self._header_subtitle)
         layout.addLayout(text, 1)
 
         transport = QLabel("HTTP · HTTPS")
         transport.setObjectName("DialogMetaBadge")
         layout.addWidget(transport, 0, Qt.AlignmentFlag.AlignTop)
         return header
+
+    def _build_progress_view(self) -> QWidget:
+        view = QWidget()
+        layout = QVBoxLayout(view)
+        layout.setContentsMargins(
+            design.SPACING["xl"],
+            design.SPACING["xs"],
+            design.SPACING["xl"],
+            design.SPACING["lg"],
+        )
+        layout.setSpacing(design.SPACING["md"])
+
+        card = QFrame()
+        card.setObjectName("OptionsCard")
+        card_layout = QVBoxLayout(card)
+        card_layout.setContentsMargins(
+            design.SPACING["lg"],
+            design.SPACING["md"],
+            design.SPACING["lg"],
+            design.SPACING["md"],
+        )
+        card_layout.setSpacing(design.SPACING["sm"])
+
+        header = QHBoxLayout()
+        header.setSpacing(design.SPACING["sm"])
+        title = QLabel("Transfer details")
+        title.setObjectName("CardTitle")
+        header.addWidget(title)
+        header.addStretch(1)
+        self._progress_state = QLabel("Starting…")
+        self._progress_state.setObjectName("HintLabel")
+        self._progress_state.setAlignment(
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        )
+        header.addWidget(self._progress_state)
+        card_layout.addLayout(header)
+
+        self._progress_name = QLabel()
+        self._progress_name.setObjectName("ProgressFile")
+        self._progress_name.setWordWrap(True)
+        card_layout.addWidget(self._progress_name)
+
+        stats = QHBoxLayout()
+        stats.setSpacing(design.SPACING["sm"])
+        self._progress_percent = QLabel("0%")
+        self._progress_percent.setObjectName("ProgressPercent")
+        stats.addWidget(self._progress_percent)
+        stats.addStretch(1)
+        self._progress_size = QLabel()
+        self._progress_size.setObjectName("ProgressMeta")
+        self._progress_size.setAlignment(
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        )
+        stats.addWidget(self._progress_size)
+        card_layout.addLayout(stats)
+
+        self._progress_bar = QProgressBar()
+        self._progress_bar.setObjectName("DownloadProgress")
+        self._progress_bar.setTextVisible(False)
+        self._progress_bar.setRange(0, 100)
+        self._progress_bar.setValue(0)
+        card_layout.addWidget(self._progress_bar)
+
+        self._progress_detail = QLabel()
+        self._progress_detail.setObjectName("HintLabel")
+        self._progress_detail.setWordWrap(True)
+        card_layout.addWidget(self._progress_detail)
+
+        layout.addWidget(card)
+
+        self._progress_folder = QLabel()
+        self._progress_folder.setObjectName("FooterHint")
+        self._progress_folder.setWordWrap(True)
+        layout.addWidget(self._progress_folder)
+        layout.addStretch(1)
+        return view
 
     def _build_url_section(self) -> QWidget:
         section = QWidget()
@@ -646,9 +741,149 @@ class AddDownloadDialog(BaseDialog):
             raise RuntimeError("The dialog has not been accepted.")
         return dict(self._result)
 
+    @property
+    def progress_mode(self) -> bool:
+        return self._progress_mode
+
+    def start_progress(self, item: DownloadItem) -> None:
+        """Keep this dialog open after Start and show live MB/GB progress."""
+        if self._manager is None or item is None:
+            return
+        self._progress_mode = True
+        self._progress_item_id = item.id
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+        self._body_scroll.hide()
+        self._progress_view.show()
+        self._header_eyebrow.setText("DOWNLOADING")
+        self._header_title.setText("Download in progress")
+        self._header_subtitle.setText(
+            "Progress updates in real time. Closing this window keeps the "
+            "download running."
+        )
+        self.later_button.hide()
+        self.start_button.hide()
+        self.cancel_button.setText("Cancel download")
+        self.error_label.hide()
+        self._footer_hint.setText(
+            "The download continues in the background after this window closes."
+        )
+        self.setMinimumSize(560, 380)
+        self.resize(640, 430)
+        self._center_on_parent()
+        self._manager.download_updated.connect(self._on_download_updated)
+        self._manager.download_removed.connect(self._on_download_removed)
+        self._progress_timer.start()
+        self._apply_progress(item)
+        self.show()
+        self.raise_()
+        self.activateWindow()
+
+    def _center_on_parent(self) -> None:
+        parent = self.parentWidget()
+        if parent is None:
+            return
+        self.move(parent.frameGeometry().center() - self.rect().center())
+
+    # ------------------------------------------------------------------ live progress
+    def _on_download_updated(self, item: DownloadItem) -> None:
+        if self._progress_mode and item.id == self._progress_item_id:
+            self._apply_progress(item)
+
+    def _on_download_removed(self, download_id: str) -> None:
+        if download_id == self._progress_item_id:
+            self.close()
+
+    def _refresh_progress_from_manager(self) -> None:
+        if self._manager is None or self._progress_item_id is None:
+            return
+        item = self._manager.get(self._progress_item_id)
+        if item is None:
+            self.close()
+            return
+        self._apply_progress(item)
+
+    def _apply_progress(self, item: DownloadItem) -> None:
+        self._progress_name.setText(item.filename)
+        self._progress_folder.setText(f"Saving to {item.folder}")
+        status = item.status
+        completed = status == DownloadStatus.COMPLETED
+        fraction = 1.0 if completed else item.progress
+        if fraction is None and item.is_active:
+            self._progress_bar.setRange(0, 0)
+            self._progress_percent.setText("…")
+        else:
+            percent = round((fraction or 0.0) * 100)
+            self._progress_bar.setRange(0, 100)
+            self._progress_bar.setValue(percent)
+            self._progress_percent.setText(f"{percent}%")
+
+        size_text = format_progress_size(item.downloaded_bytes, item.total_bytes)
+        self._progress_size.setText(size_text or "Size unknown")
+
+        parts: list[str] = []
+        if item.speed > 0 and item.is_active:
+            parts.append(format_speed(item.speed))
+        if item.eta is not None and item.is_active:
+            parts.append(f"{format_eta(item.eta)} left")
+        self._progress_detail.setText("   ·   ".join(parts))
+        self._progress_state.setText(status.value)
+
+        if completed:
+            self._progress_percent.setText("100%")
+            self._progress_size.setText(
+                format_progress_size(item.total_bytes, item.total_bytes)
+                or format_size(item.downloaded_bytes)
+            )
+            self._progress_state.setText("Completed")
+            self._progress_detail.setText("Download complete")
+            self.cancel_button.setText("Close")
+            self._footer_hint.setText(f"Saved to {item.folder}")
+            self._progress_timer.stop()
+            if not self._progress_close_timer.isActive():
+                self._progress_close_timer.start()
+        elif status == DownloadStatus.FAILED:
+            self._progress_state.setText("Failed")
+            self.cancel_button.setText("Close")
+            self._progress_timer.stop()
+            if item.error:
+                self.error_label.setText(item.error)
+                self.error_label.show()
+            self._footer_hint.setText("The download failed.")
+        elif status == DownloadStatus.STOPPED:
+            self._progress_state.setText("Stopped")
+            self.cancel_button.setText("Close")
+            self._progress_timer.stop()
+            self._footer_hint.setText(
+                "The download was stopped. Resume it from the download list."
+            )
+        else:
+            self.cancel_button.setText("Cancel download")
+            self._footer_hint.setText(
+                "The download continues in the background after this window closes."
+            )
+
+    def _on_cancel_clicked(self) -> None:
+        if not self._progress_mode:
+            self.reject()
+            return
+        item = (
+            self._manager.get(self._progress_item_id)
+            if self._manager is not None and self._progress_item_id
+            else None
+        )
+        if item is not None and item.status not in {
+            DownloadStatus.COMPLETED,
+            DownloadStatus.FAILED,
+            DownloadStatus.STOPPED,
+        }:
+            self._manager.stop([item.id])
+        self.close()
+
     def showEvent(self, event) -> None:
         super().showEvent(event)
         self._sync_footer_hint()
+        if self._progress_mode:
+            return
         QTimer.singleShot(0, self._focus_initial_field)
 
     def _focus_initial_field(self) -> None:
@@ -664,12 +899,23 @@ class AddDownloadDialog(BaseDialog):
         self._sync_footer_hint()
 
     def _sync_footer_hint(self) -> None:
-        self._footer_hint.setVisible(self.width() >= 720)
+        self._footer_hint.setVisible(self._progress_mode or self.width() >= 720)
 
     def reject(self) -> None:
         self._probe_timer.stop()
         self._probe.abort()
         super().reject()
+
+    def closeEvent(self, event) -> None:
+        self._progress_timer.stop()
+        self._progress_close_timer.stop()
+        if self._progress_mode and self._manager is not None:
+            try:
+                self._manager.download_updated.disconnect(self._on_download_updated)
+                self._manager.download_removed.disconnect(self._on_download_removed)
+            except (RuntimeError, TypeError):
+                pass
+        super().closeEvent(event)
 
     # ------------------------------------------------------------------ layout
     def _sync_default_size(self) -> None:

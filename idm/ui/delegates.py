@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
     QStyleOptionViewItem,
 )
 
+from ..core.url_utils import format_progress_size
 from ..models.download_item import DownloadStatus
 from ..models.table_model import ITEM_ROLE
 from . import icons
@@ -155,11 +156,16 @@ class NameDelegate(_BaseDelegate):
         label_font = QFont(option.font)
         label_font.setPointSizeF(max(8.0, option.font.pointSizeF() - 0.8))
         label_metrics = QFontMetrics(label_font)
-        label_width = max(
-            label_metrics.horizontalAdvance("100%"),
-            label_metrics.horizontalAdvance("Queued"),
-        ) + 8
-        bar_width = max(0, text_width - label_width - 10)
+        size_text = format_progress_size(
+            item.downloaded_bytes, item.total_bytes, compact=True
+        )
+        meta = f"{label}   ·   {size_text}" if size_text else label
+        meta_width = label_metrics.horizontalAdvance(meta)
+        if size_text and text_width - meta_width - 10 < 150:
+            meta = label
+            meta_width = label_metrics.horizontalAdvance(meta)
+
+        bar_width = max(0, text_width - meta_width - 10)
         bar_rect = QRect(text_left, icon_box.top() + 27, bar_width, 6)
         bar_color = QColor(p.track)
 
@@ -185,11 +191,11 @@ class NameDelegate(_BaseDelegate):
 
         painter.setFont(label_font)
         painter.setPen(muted_color)
-        label_rect = QRect(bar_rect.right() + 8, bar_rect.top() - 6, label_width, 18)
+        meta_rect = QRect(text_left, bar_rect.top() - 6, text_width, 18)
         painter.drawText(
-            label_rect,
-            int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
-            label,
+            meta_rect,
+            int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter),
+            meta,
         )
 
         self._paint_separator(painter, option)

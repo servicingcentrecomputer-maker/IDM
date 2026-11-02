@@ -190,6 +190,41 @@ def format_size(size: float | None) -> str:
     return f"{value:.1f} TB"
 
 
+def _unit_size(size: float) -> tuple[float, str]:
+    value = float(size)
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if value < 1024 or unit == "TB":
+            return value, unit
+        value /= 1024
+    return value, "TB"
+
+
+def _unit_number(value: float, unit: str) -> str:
+    if unit == "B":
+        return str(int(value))
+    return f"{value:.1f}".removesuffix(".0")
+
+
+def format_progress_size(
+    downloaded: int | None, total: int | None, *, compact: bool = False
+) -> str:
+    """Live "1.4 GB of 2.2 GB" (or compact "1.4/2.2 GB") download readout."""
+    received = max(0, int(downloaded or 0))
+    if not total or total <= 0:
+        return format_size(received) if received else ""
+    if received >= total:
+        if compact:
+            amount, unit = _unit_size(total)
+            return f"{_unit_number(amount, unit)} {unit}"
+        return format_size(total)
+    if not compact:
+        return f"{format_size(received)} of {format_size(total)}"
+    whole, unit = _unit_size(total)
+    scale = total / whole if whole else 1
+    got = received / scale
+    return f"{_unit_number(got, unit)}/{_unit_number(whole, unit)} {unit}"
+
+
 def format_speed(bytes_per_second: float | None) -> str:
     if not bytes_per_second or bytes_per_second <= 0:
         return "—"

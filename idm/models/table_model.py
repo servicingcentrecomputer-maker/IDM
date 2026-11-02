@@ -15,7 +15,13 @@ from PySide6.QtGui import QColor, QPalette
 from PySide6.QtWidgets import QApplication
 
 from ..constants import CATEGORY_FILTER_KEYS
-from ..core.url_utils import format_eta, format_last_try, format_size, format_speed
+from ..core.url_utils import (
+    format_eta,
+    format_last_try,
+    format_progress_size,
+    format_size,
+    format_speed,
+)
 from .download_item import DownloadItem, DownloadStatus
 
 if TYPE_CHECKING:
@@ -125,7 +131,13 @@ class DownloadTableModel(QAbstractTableModel):
             if column == COLUMN_NAME:
                 return item.filename
             if column == COLUMN_SIZE:
-                return format_size(item.total_bytes) if item.total_bytes is not None else "—"
+                if item.total_bytes is None:
+                    return "—"
+                if item.downloaded_bytes and item.status != DownloadStatus.COMPLETED:
+                    return format_progress_size(
+                        item.downloaded_bytes, item.total_bytes, compact=True
+                    )
+                return format_size(item.total_bytes)
             if column == COLUMN_CATEGORY:
                 return item.category or "Other"
             if column == COLUMN_STATUS:

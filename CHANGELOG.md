@@ -3,6 +3,16 @@
 All notable changes to IDM are recorded here. Versions follow semantic
 versioning (`MAJOR.MINOR.PATCH`).
 
+## [Unreleased]
+
+### Added
+
+- Live MB/GB download readouts. After **Start Download** the Download File Info
+  dialog stays open as a compact live view with the percentage, downloaded and
+  total size, transfer rate, time left and status, and closes itself when the
+  transfer finishes. The download list also shows the downloaded amount in its
+  Size column (for example `8.3/64 MB`).
+
 ## [3.6.0] — 2026-11-01
 
 ### Added
