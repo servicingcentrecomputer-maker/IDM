@@ -1,20 +1,20 @@
 {
   "app_name": "IDM",
   "channel": "stable",
-  "latest_version": "3.6.2",
+  "latest_version": "3.6.3",
   "minimum_supported_version": "1.0.0",
-  "release_date": "2026-11-02",
+  "release_date": "2026-11-03",
   "release_notes": [
-    "Hybrid Light and Dark themes built on shared design tokens; switching themes no longer flashes a white window.",
-    "The dashboard now reports total downloads, active and completed transfers, total data and live current speed.",
-    "New Refresh button and View > Refresh (F5) reload the download list without disturbing running transfers.",
-    "A sort control in the content header orders the list by name, size, date added, downloaded amount, progress, speed or status.",
-    "The new Downloaded column shows the bytes received separately from the total size, and the list drops low-priority columns on narrow windows.",
-    "New Other Files library destination, sidebar connection status, version chip and a More toolbar menu below 1120 px."
+    "Bandwidth limiting now measures the link: no limit, a fixed maximum, or a percentage of the speed IDM actually moved, refreshed while downloads run.",
+    "The Download Progress window plots speed over time and shows the limit that is really binding, so a slow server is no longer mistaken for a cap.",
+    "FTP and FTPS downloads with resume, engine-level redirects up to eight hops, and dynamic re-segmentation that hands a stalled connection's tail to an idle one.",
+    "New Properties, Rename, Refresh Download Link, Verify Checksum and Add Batch Downloads tools, plus system tray control and native notifications.",
+    "Connection settings gained an HTTP/HTTPS proxy with bypass matching, per-site credentials and timeouts; passwords live in Windows Credential Manager, never in the database.",
+    "Brave and Opera are detected and registered, and the Browser Integration page now shows the native host answering live."
   ],
-  "download_url": "https://github.com/servicingcentrecomputer-maker/IDM/releases/download/v3.6.2/IDM-Setup-3.6.2.exe",
-  "sha256": "b2c9f9cea6ed6f7f6bf742701300ba7200b6897dd3f81ae16d15bcad4b7afa1d",
-  "package_size": 62471156,
+  "download_url": "https://github.com/servicingcentrecomputer-maker/IDM/releases/download/v3.6.3/IDM-Setup-3.6.3.exe",
+  "sha256": "bc8ba5b6fd4d325b4d779376420303feaeeb48459076a4d718a0a5641d19de99",
+  "package_size": 62572274,
   "mandatory": false,
-  "manifest_signature": "KVomkW02SLe+T1gYzMnQINXORHu1VJ8y9Gqlq8d1H9hPxkohPEI75pXfYGQhlxSkTjlBkyKvKg+6NJtkbeZkCQ=="
+  "manifest_signature": "g7ou3z5wlYSDG7Tj6VI8tNCQ4ScleoRLU3mb62FYMxQ0dgO4mD68ZYRSW9BIKgOdfM8SiPFSZqqAX1iYEU0qCA=="
 }
