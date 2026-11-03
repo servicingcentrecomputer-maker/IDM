@@ -33,10 +33,17 @@ class Segment:
     start: int
     end: int
     done: int = 0
+    # Last byte handed to a connection.  Re-planning never cuts into bytes an
+    # in-flight request is still fetching.
+    claimed_until: int = -1
 
     @property
     def length(self) -> int:
         return max(0, self.end - self.start + 1)
+
+    @property
+    def remaining(self) -> int:
+        return max(0, self.length - self.done)
 
     @property
     def next_offset(self) -> int:
@@ -86,6 +93,36 @@ class SegmentPlan:
 
     def snapshot(self, interrupted: bool = False) -> list[dict[str, Any]]:
         return [segment.snapshot(interrupted) for segment in self.segments]
+
+    def replan_for(self, idle: Segment, min_bytes: int) -> Segment | None:
+        """Rebalance work onto the connection that owns ``idle``.
+
+        A connection that finishes early takes over half of the still-unwritten
+        tail of the slowest segment, so one slow connection no longer decides the
+        finishing time of the whole download.  Returns the new segment, or
+        ``None`` when there is nothing worth taking.  Callers must hold the lock
+        that guards the plan.
+        """
+        if len(self.segments) >= MAX_SEGMENTS:
+            return None
+        donor: Segment | None = None
+        donor_tail = 0
+        for segment in self.segments:
+            if segment is idle or not segment.remaining:
+                continue
+            # Bytes past the last one any connection claimed are still unclaimed.
+            unclaimed = segment.end - max(segment.claimed_until, segment.next_offset - 1)
+            if unclaimed >= min_bytes * 2 and (donor is None or unclaimed > donor_tail):
+                donor, donor_tail = segment, unclaimed
+        if donor is None:
+            return None
+        cut = donor.end - donor_tail // 2
+        tail = Segment(index=0, start=cut, end=donor.end)
+        donor.end = cut - 1
+        self.segments.insert(self.segments.index(donor) + 1, tail)
+        for position, segment in enumerate(self.segments):
+            segment.index = position
+        return tail
 
     def to_record(self) -> dict[str, Any]:
         return {

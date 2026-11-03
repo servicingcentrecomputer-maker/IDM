@@ -202,6 +202,14 @@
         );
         return undefined;
       }
+      if (message.type === "idm:collectLinks") {
+        const captured = detector.collectLinks(document, {
+          pageUrl: location.href,
+          pageTitle: document.title || location.hostname,
+        });
+        sendResponse(captured);
+        return undefined;
+      }
       if (message.type === "idm:showToast") {
         showToast(message.text);
         sendResponse({ ok: true });

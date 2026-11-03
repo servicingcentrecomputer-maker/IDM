@@ -10,11 +10,13 @@ import pytest
 
 from integrations import browser_registry
 from integrations.browser_registry import (
+    BRAVE_EXTENSION_ID,
     CHROME_EXTENSION_ID,
     CHROME_EXTENSION_KEY,
     EDGE_EXTENSION_ID,
     FIREFOX_EXTENSION_ID,
     NATIVE_HOST_NAME,
+    OPERA_EXTENSION_ID,
     extension_id_for,
     extension_origin,
     is_allowed_extension,
@@ -31,16 +33,27 @@ def _derive_id(key: str) -> str:
 def test_embedded_chrome_key_derives_the_pinned_id() -> None:
     assert _derive_id(CHROME_EXTENSION_KEY) == CHROME_EXTENSION_ID
     assert EDGE_EXTENSION_ID == CHROME_EXTENSION_ID
+    # Brave and Opera load the same unpacked extension, so Chromium derives the
+    # same ID from the same public key.
+    assert BRAVE_EXTENSION_ID == CHROME_EXTENSION_ID
+    assert OPERA_EXTENSION_ID == CHROME_EXTENSION_ID
+
+
+_CHROMIUM_BROWSERS = ("chrome", "edge", "brave", "opera")
 
 
 def test_extension_id_for_uses_environment_override() -> None:
     assert extension_id_for("chrome", {}) == CHROME_EXTENSION_ID
     assert extension_id_for("edge", {}) == EDGE_EXTENSION_ID
     assert extension_id_for("firefox", {}) == FIREFOX_EXTENSION_ID
+    assert extension_id_for("brave", {}) == BRAVE_EXTENSION_ID
+    assert extension_id_for("opera", {}) == OPERA_EXTENSION_ID
     override = "abcdefghijklmnopabcdefghijklmnop"
     assert extension_id_for("chrome", {"IDM_CHROME_EXTENSION_ID": override}) == override
     # Blank overrides fall back to the built-in ID.
     assert extension_id_for("edge", {"IDM_EDGE_EXTENSION_ID": "  "}) == EDGE_EXTENSION_ID
+    assert extension_id_for("brave", {"IDM_BRAVE_EXTENSION_ID": override}) == override
+    assert extension_id_for("opera", {"IDM_OPERA_EXTENSION_ID": override}) == override
     with pytest.raises(ValueError):
         extension_id_for("safari", {})
 
@@ -50,6 +63,10 @@ def test_extension_origin_is_browser_specific() -> None:
         f"chrome-extension://{CHROME_EXTENSION_ID}/"
     )
     assert extension_origin("firefox", {}) == FIREFOX_EXTENSION_ID
+    for browser in ("brave", "opera"):
+        assert extension_origin(browser, {}) == (
+            f"chrome-extension://{extension_id_for(browser, {})}/"
+        )
 
 
 def test_allowed_extension_matching() -> None:
@@ -62,6 +79,17 @@ def test_allowed_extension_matching() -> None:
     assert not is_allowed_extension("chrome", "unrelatedextensionid", {})
     assert not is_allowed_extension("safari", "anything", {})
     assert not is_allowed_extension("chrome", "", {})
+
+
+@pytest.mark.parametrize("browser", _CHROMIUM_BROWSERS)
+def test_chromium_browsers_allowlist_by_origin(browser, tmp_path) -> None:
+    host = tmp_path / "IDM_NativeHost.exe"
+    host.write_bytes(b"binary")
+    manifest = native_manifest(browser, host, {})
+    assert manifest["allowed_origins"] == [extension_origin(browser, {})]
+    assert "allowed_extensions" not in manifest
+    assert validate_native_manifest(manifest, browser) == []
+    assert is_allowed_extension(browser, extension_id_for(browser, {}), {})
 
 
 def test_native_manifest_shape_per_browser(tmp_path: Path) -> None:
@@ -138,3 +166,7 @@ def test_builtin_ids_are_documented() -> None:
     assert browser_registry.builtin_extension_id("chrome") == CHROME_EXTENSION_ID
     assert browser_registry.builtin_extension_id("edge") == EDGE_EXTENSION_ID
     assert browser_registry.builtin_extension_id("firefox") == FIREFOX_EXTENSION_ID
+    assert browser_registry.builtin_extension_id("brave") == BRAVE_EXTENSION_ID
+    assert browser_registry.builtin_extension_id("opera") == OPERA_EXTENSION_ID
+    with pytest.raises(KeyError):
+        browser_registry.builtin_extension_id("safari")

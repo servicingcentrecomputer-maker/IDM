@@ -10,12 +10,14 @@ import pytest
 
 from integrations.protocol import (
     DuplicateTracker,
+    MAX_CAPTURE_LINKS,
     MAX_MESSAGE_BYTES,
     ProtocolError,
     ValidationError,
     decode_line,
     encode_line,
     encode_message,
+    normalize_capture_request,
     normalize_download_request,
     read_message,
     require_browser,
@@ -118,6 +120,8 @@ def test_request_id_validation() -> None:
 
 def test_browser_and_extension_validation() -> None:
     assert require_browser({"browser": "Chrome"}) == "chrome"
+    for browser in ("brave", "opera"):
+        assert require_browser({"browser": browser.upper()}) == browser
     with pytest.raises(ValidationError) as caught:
         require_browser({"browser": "safari"})
     assert caught.value.code == "unsupported_browser"
@@ -127,6 +131,15 @@ def test_browser_and_extension_validation() -> None:
     )
     with pytest.raises(ValidationError):
         require_extension_id({"extension_id": "bad id"})
+
+
+def test_every_module_agrees_on_the_supported_browsers() -> None:
+    """A browser missing from one list silently breaks its integration."""
+    from integrations import browser_detector, registration
+    from integrations.protocol import SUPPORTED_BROWSERS as PROTOCOL_BROWSERS
+
+    assert PROTOCOL_BROWSERS == browser_detector.SUPPORTED_BROWSERS
+    assert PROTOCOL_BROWSERS == registration.SUPPORTED_BROWSERS
 
 
 @pytest.mark.parametrize(
@@ -336,3 +349,138 @@ def test_response_helpers_have_stable_shape() -> None:
         "retryable": True,
     }
     assert json.dumps(ok)  # always JSON serialisable
+
+
+# ---------------------------------------------------------------------------
+# Page link capture
+# ---------------------------------------------------------------------------
+
+
+def _capture_message(**overrides):
+    message = {
+        "type": "capture_page_links",
+        "request_id": "req-capture01",
+        "browser": "chrome",
+        "extension_id": "abcd",
+        "client_version": "1.0.0",
+        "page_url": "https://example.com/index.html",
+        "page_title": "Example index",
+        "links": [
+            {"url": "https://example.com/files/a.zip", "filename": "a.zip"},
+            {"url": "https://example.com/files/b.pdf"},
+        ],
+    }
+    message.update(overrides)
+    return message
+
+
+def test_normalize_capture_request_keeps_allowlisted_fields() -> None:
+    normalized = normalize_capture_request(_capture_message(extra="ignored"))
+    assert normalized == {
+        "type": "capture_page_links",
+        "request_id": "req-capture01",
+        "browser": "chrome",
+        "extension_id": "abcd",
+        "client_version": "1.0.0",
+        "page_url": "https://example.com/index.html",
+        "page_title": "Example index",
+        "links": [
+            {"url": "https://example.com/files/a.zip", "filename": "a.zip"},
+            {"url": "https://example.com/files/b.pdf", "filename": ""},
+        ],
+    }
+    assert "extra" not in normalized
+
+
+def test_capture_drops_links_that_cannot_be_downloaded() -> None:
+    message = _capture_message(
+        links=[
+            {"url": "https://example.com/a.zip"},
+            {"url": "mailto:someone@example.com"},
+            {"url": "javascript:alert(1)"},
+            {"url": "#section-two"},
+            {"url": ""},
+            "not a url",
+            None,
+        ]
+    )
+    normalized = normalize_capture_request(message)
+    assert normalized["links"] == [
+        {"url": "https://example.com/a.zip", "filename": ""}
+    ]
+
+
+def test_capture_deduplicates_repeated_links() -> None:
+    message = _capture_message(
+        links=[
+            {"url": "https://example.com/a.zip"},
+            {"url": "https://example.com/a.zip"},
+            {"url": "https://example.com/b.zip"},
+        ]
+    )
+    normalized = normalize_capture_request(message)
+    assert [link["url"] for link in normalized["links"]] == [
+        "https://example.com/a.zip",
+        "https://example.com/b.zip",
+    ]
+
+
+def test_capture_keeps_a_safe_name_and_drops_an_unsafe_one() -> None:
+    message = _capture_message(
+        links=[
+            {"url": "https://example.com/a.zip", "filename": "../escape.zip"},
+            {"url": "https://example.com/b.zip", "filename": "b.zip"},
+        ]
+    )
+    normalized = normalize_capture_request(message)
+    assert normalized["links"][0]["filename"] == ""
+    assert normalized["links"][1]["filename"] == "b.zip"
+
+
+@pytest.mark.parametrize(
+    ("links", "code"),
+    [
+        ([], "no_links"),
+        ("https://example.com/a.zip", "no_links"),
+        (None, "no_links"),
+        ([{"url": "mailto:someone@example.com"}], "no_capturable_links"),
+        ([{"no_url": True}], "no_capturable_links"),
+    ],
+)
+def test_capture_needs_downloadable_links(links, code) -> None:
+    with pytest.raises(ValidationError) as caught:
+        normalize_capture_request(_capture_message(links=links))
+    assert caught.value.code == code
+
+
+def test_capture_refuses_an_overlong_page() -> None:
+    links = [
+        {"url": f"https://example.com/f{i}.zip"}
+        for i in range(MAX_CAPTURE_LINKS + 1)
+    ]
+    with pytest.raises(ValidationError) as caught:
+        normalize_capture_request(_capture_message(links=links))
+    assert caught.value.code == "too_many_links"
+
+    # Exactly at the limit is accepted.
+    accepted = normalize_capture_request(_capture_message(links=links[:-1]))
+    assert len(accepted["links"]) == MAX_CAPTURE_LINKS
+
+
+def test_capture_validates_the_page_and_the_request_shape() -> None:
+    with pytest.raises(ValidationError) as caught:
+        normalize_capture_request(_capture_message(type="request_download"))
+    assert caught.value.code == "unsupported_type"
+
+    with pytest.raises(ValidationError):
+        normalize_capture_request(_capture_message(browser="safari"))
+
+    with pytest.raises(ValidationError) as caught:
+        normalize_capture_request(_capture_message(page_url="file:///C:/page.html"))
+    assert caught.value.code == "invalid_referrer"
+
+    with pytest.raises(ValidationError):
+        normalize_capture_request(_capture_message(request_id="short"))
+
+    with pytest.raises(ValidationError):
+        normalize_capture_request("not a dict")

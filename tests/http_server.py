@@ -6,6 +6,7 @@ restarted transfers produce exactly the original file.
 
 from __future__ import annotations
 
+import base64
 import random
 import re
 import sys
@@ -15,6 +16,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
 SIZE_PATTERN = re.compile(r"^/(?P<route>[a-z-]+)/(?P<size>\d+)$")
+_REDIRECT_PATTERN = re.compile(r"^/redirect/(?P<size>\d+)$")
 _PAYLOAD_CACHE: dict[int, bytes] = {}
 _PAYLOAD_LOCK = threading.Lock()
 
@@ -54,6 +56,15 @@ class TestHandler(BaseHTTPRequestHandler):
             self.end_headers()
             if send_body:
                 self.wfile.write(body)
+            return
+
+        redirect = _REDIRECT_PATTERN.match(parsed.path)
+        if redirect is not None:
+            server: TestServerState = self.server.state  # type: ignore[attr-defined]
+            key = f"{self.command} {self.path}"
+            with server.lock:
+                server.request_counts[key] = server.request_counts.get(key, 0) + 1
+            self._redirect(parsed, int(redirect.group("size")))
             return
 
         match = SIZE_PATTERN.match(parsed.path)
@@ -106,9 +117,20 @@ class TestHandler(BaseHTTPRequestHandler):
             "flaky",
             "ratelimit",
             "media",
+            "protected",
         }:
             self._error(404, "Unknown route")
             return
+
+        if route == "protected":
+            expected = "Basic " + base64.b64encode(b"bob:pw").decode("ascii")
+            if self.headers.get("Authorization") != expected:
+                self._error(
+                    401,
+                    "Unauthorized",
+                    {"WWW-Authenticate": 'Basic realm="IDM test"'},
+                )
+                return
 
         supports_range = route not in {"norange", "slow-norange"}
         content_type = "video/mp4" if route == "media" else "application/octet-stream"
@@ -171,6 +193,25 @@ class TestHandler(BaseHTTPRequestHandler):
                 self.wfile.flush()
             except (BrokenPipeError, ConnectionResetError):
                 return
+
+    def _redirect(self, parsed, size: int) -> None:
+        """Answer with the redirect chain a test asked for."""
+        query = parse_qs(parsed.query)
+        if query.get("loop", [""])[0] == "1":
+            location = self.path
+        else:
+            target = query.get("to", [f"/file/{size}"])[0]
+            hops = int(query.get("hops", ["1"])[0])
+            if not target.startswith("/"):
+                location = target  # absolute, possibly an unsupported scheme
+            elif hops > 1:
+                location = f"/redirect/{size}?to={target}&hops={hops - 1}"
+            else:
+                location = target
+        self.send_response(302)
+        self.send_header("Location", location)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
 
     def _error(
         self, status: int, message: str, headers: dict[str, str] | None = None

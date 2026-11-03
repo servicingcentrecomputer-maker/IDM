@@ -178,4 +178,127 @@ assert.throws(() => N.buildDownloadRequest({ url: "javascript:alert(1)" }, {}));
 assert.equal(N.safeFilename("../../evil.exe"), "");
 assert.equal(N.safeFilename("clip.mp4"), "clip.mp4");
 
+// ----------------------------------------------------------- page link capture
+// collectLinks gathers every ordinary link a page publishes, not only the
+// configured media types, and skips anything IDM cannot download.
+const manyLinks = [];
+for (let index = 0; index < 140; index += 1) {
+  manyLinks.push(link("https://example.com/f" + index + ".zip", "f" + index));
+}
+const bulk = D.collectLinks(
+  fakeDoc(manyLinks),
+  { pageUrl: "https://example.com/index.html", pageTitle: "Index" }
+);
+assert.equal(bulk.total, 140);
+assert.equal(bulk.links.length, D.MAX_CAPTURE_LINKS, "the batch stays inside the cap");
+assert.equal(bulk.restricted, null);
+
+const mixed = D.collectLinks(
+  fakeDoc([
+    link("files/a.zip", "A"),
+    link("https://example.com/files/a.zip", "A again"),
+    link("https://example.com/files/b.pdf", "B", "renamed.pdf"),
+    link("#section", "Fragment"),
+    link("mailto:someone@example.com", "Mail"),
+    link("javascript:alert(1)", "Script"),
+    link("https://r1.googlevideo.com/videoplayback", "Protected stream"),
+  ]),
+  { pageUrl: "https://example.com/index.html", pageTitle: "Index" }
+);
+assert.deepEqual(mixed.links.map((entry) => entry.url), [
+  "https://example.com/files/a.zip",
+  "https://example.com/files/b.pdf",
+]);
+assert.equal(mixed.links[0].filename, "a.zip");
+assert.equal(mixed.links[1].filename, "renamed.pdf");
+assert.equal(mixed.links[0].title, "A");
+
+const blockedPage = D.collectLinks(
+  fakeDoc([link("https://example.com/a.zip", "A")]),
+  { pageUrl: "https://www.youtube.com/watch?v=abc", pageTitle: "Video" }
+);
+assert.equal(blockedPage.links.length, 0);
+assert.equal(blockedPage.restricted.platform, "YouTube");
+
+assert.equal(
+  D.collectLinks(null, { pageUrl: "https://example.com" }).links.length,
+  0
+);
+assert.equal(
+  D.collectLinks(fakeDoc([link("https://example.com/a.zip", "A")]), {
+    pageUrl: "file:///C:/page.html",
+  }).links.length,
+  0
+);
+
+const capture = N.buildCaptureRequest(mixed, { pageUrl: "https://example.com" });
+assert.equal(capture.type, "capture_page_links");
+assert.equal(capture.browser, "chrome");
+assert.equal(capture.extension_id, "ljckgbgnolmopacdgmmgaijleadcmpgn");
+assert.equal(capture.page_url, "https://example.com/index.html");
+assert.equal(capture.page_title, "Index");
+assert.deepEqual(capture.links, [
+  { url: "https://example.com/files/a.zip", filename: "a.zip" },
+  { url: "https://example.com/files/b.pdf", filename: "renamed.pdf" },
+]);
+assert.throws(() => N.buildCaptureRequest({ page: {}, links: [] }, {}));
+assert.throws(() =>
+  N.buildCaptureRequest(
+    { page: {}, links: [{ url: "javascript:alert(1)" }] },
+    {}
+  )
+);
+assert.deepEqual(
+  N.buildCaptureRequest(
+    { page: {}, links: [{ url: "https://example.com/a.zip", filename: "../../evil.exe" }] },
+    {}
+  ).links,
+  [{ url: "https://example.com/a.zip", filename: "" }]
+);
+assert.equal(
+  N.buildCaptureRequest(
+    {
+      page: {},
+      links: manyLinks.map((entry) => ({
+        url: entry.getAttribute("href"),
+        filename: "",
+      })),
+    },
+    {}
+  ).links.length,
+  N.MAX_CAPTURE_LINKS
+);
+
+// ------------------------------------------------------------- browser identity
+// The native host compares this claim with the process that launched it, so
+// Brave and Opera must identify themselves correctly.
+function reloadNative(userAgent, braveApi) {
+  // Node exposes navigator as a getter-only property, so it has to be
+  // redefined rather than assigned.
+  Object.defineProperty(global, "navigator", {
+    value: userAgent === null ? undefined : { userAgent: userAgent, brave: braveApi },
+    configurable: true,
+    writable: true,
+  });
+  delete require.cache[path.join(BASE, "native-messaging.js")];
+  return require(path.join(BASE, "native-messaging.js"));
+}
+
+const braveApi = { isBrave: () => Promise.resolve(true) };
+const braveChromeUA =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36";
+assert.equal(reloadNative(braveChromeUA, braveApi).BROWSER, "brave");
+assert.equal(
+  reloadNative(braveChromeUA + " OPR/110.0.0.0", undefined).BROWSER,
+  "opera"
+);
+assert.equal(
+  reloadNative(braveChromeUA + " Edg/126.0.0.0", undefined).BROWSER,
+  "edge"
+);
+assert.equal(reloadNative(braveChromeUA, undefined).BROWSER, "chrome");
+// A missing navigator (an unexpected context) must not fabricate a browser.
+reloadNative(null);
+assert.equal(require(path.join(BASE, "native-messaging.js")).BROWSER, "chrome");
+
 console.log("video assistant harness passed");

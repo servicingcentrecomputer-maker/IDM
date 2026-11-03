@@ -303,10 +303,14 @@ def test_connection_failure_is_readable(qt_app) -> None:
 
 
 def test_unsupported_scheme_is_rejected_without_a_request(qt_app) -> None:
-    for url in ("file:///C:/Windows/win.ini", "ftp://example.com/file.zip"):
+    for url in (
+        "file:///C:/Windows/win.ini",
+        "data:text/html,<script>alert(1)</script>",
+        "javascript:alert(1)",
+    ):
         message = run_probe(qt_app, url)
         assert isinstance(message, str)
-        assert "HTTP and HTTPS" in message
+        assert "HTTP, HTTPS, FTP and FTPS" in message
 
 
 def test_probe_timeout_reports_a_friendly_error(qt_app) -> None:

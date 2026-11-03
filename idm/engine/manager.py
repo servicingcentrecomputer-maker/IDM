@@ -5,12 +5,20 @@ from __future__ import annotations
 import logging
 import time
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QTimer, Signal
 
-from ..constants import PRIORITY_HIGH, PRIORITY_LOW
+from ..constants import CATEGORY_GENERAL, PRIORITY_HIGH, PRIORITY_LOW
+from downloads.location_manager import LocationError, validate_folder_path
+from ..core.bandwidth import (
+    LIMIT_BINDING_RATIO,
+    MEASURE_WINDOW_SECONDS,
+    SPEED_LIMIT_FIXED,
+    SPEED_LIMIT_PERCENT,
+    LinkCapacityMeter,
+)
 from ..core.media import (
     format_for,
     media_kind_for,
@@ -19,10 +27,13 @@ from ..core.media import (
     source_domain,
 )
 from ..core.categories import detect_category, safe_category
+from ..core.media_policy import restriction_message, restricted_platform
+from ..core.network import network_profile
 from ..core.network_monitor import NetworkMonitor
 from ..core.paths import ensure_download_dir
 from ..core.settings import AppSettings
 from ..core.url_utils import (
+    InvalidUrlError,
     sanitize_filename,
     unique_filename,
     validate_url,
@@ -32,7 +43,8 @@ from ..models.download_item import (
     DownloadItem,
     DownloadStatus,
 )
-from .segmented import discard_partial, inspect_partial
+from .checksum import ChecksumVerifier
+from .segmented import discard_partial, inspect_partial, journal_path
 from .speed_limiter import SpeedLimiter
 from .worker import DownloadWorker
 
@@ -40,6 +52,10 @@ logger = logging.getLogger(__name__)
 
 _NETWORK_WAIT_MESSAGE = "Waiting for the network connection to come back."
 _NETWORK_RETRY_INTERVAL_MS = 30_000
+
+# The measured link speed is only interesting across restarts, not per tick, so
+# it is written to settings at most this often.
+_CAPACITY_SAVE_INTERVAL = 30.0
 _NETWORK_FAILURE_HINTS = (
     "network error",
     "network is unreachable",
@@ -66,6 +82,7 @@ class DownloadManager(QObject):
     download_completed = Signal(object)
     download_failed = Signal(object)
     queue_changed = Signal()
+    checksum_checked = Signal(object, str, str)
 
     def __init__(self, settings: AppSettings, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -74,7 +91,12 @@ class DownloadManager(QObject):
         self._order: list[str] = []
         self._workers: dict[str, DownloadWorker] = {}
         self._pending_cleanup: dict[str, tuple[Path, Path, bool]] = {}
-        self._limiter = SpeedLimiter(settings.speed_limit_kbps * 1024)
+        self._capacity = LinkCapacityMeter()
+        self._capacity.seed(getattr(settings, "measured_capacity_kbps", 0))
+        self._capacity_saved_at = time.monotonic()
+        self._capacity_measuring = False
+        self._capacity_measure_until = 0.0
+        self._limiter = SpeedLimiter(self._effective_limit_bytes())
         self.max_concurrent = settings.max_concurrent
         self.connections_per_download = max(
             1, min(int(getattr(settings, "connections_per_download", 1)), 16)
@@ -105,6 +127,9 @@ class DownloadManager(QObject):
             QTimer.singleShot(1500, self._retry_network_waiting)
 
         self.queue_changed.connect(self._on_queue_changed)
+
+        self._checksums = ChecksumVerifier(self)
+        self._checksums.finished.connect(self._on_checksum_finished)
 
         self._persist_timer = QTimer(self)
         self._persist_timer.setInterval(1500)
@@ -409,8 +434,17 @@ class DownloadManager(QObject):
         download_later: bool = False,
     ) -> DownloadItem:
         normalized_url = validate_url(url)
+        restricted = restricted_platform(normalized_url)
+        if restricted:
+            # The dialog blocks these too; the engine must not be the one place
+            # a protected platform can still be reached.
+            raise ValueError(restriction_message(restricted))
         try:
-            folder_path = ensure_download_dir(folder)
+            validated_folder = validate_folder_path(folder)
+        except LocationError as exc:
+            raise ValueError(str(exc)) from exc
+        try:
+            folder_path = ensure_download_dir(validated_folder)
         except OSError as exc:
             raise ValueError(f"Could not use the destination folder: {exc}") from exc
 
@@ -556,6 +590,7 @@ class DownloadManager(QObject):
                 connections=item.connections,
                 speed_limit_kbps=item.speed_limit_kbps,
                 expected_sha256=item.expected_sha256,
+                network=network_profile(self._settings, item.url),
                 parent=self,
             )
         except Exception as exc:
@@ -775,8 +810,96 @@ class DownloadManager(QObject):
         self._auto_resume_on_network = bool(
             getattr(self._settings, "auto_resume_on_network", True)
         )
-        self._limiter.set_limit_kbps(self._settings.speed_limit_kbps)
+        self._limiter.set_limit_bytes(self._effective_limit_bytes())
         self._pump()
+
+    def _effective_limit_bytes(self) -> int:
+        """Resolve the configured limit mode into bytes per second.
+
+        A percentage has no meaning until the link has been observed, so an
+        unmeasured connection stays unlimited rather than inventing a number.
+        """
+        settings = self._settings
+        mode = getattr(settings, "speed_limit_mode", SPEED_LIMIT_FIXED)
+        if mode == SPEED_LIMIT_FIXED:
+            return max(0, int(settings.speed_limit_kbps)) * 1024
+        if mode == SPEED_LIMIT_PERCENT:
+            return self._capacity.limit_for_percent(
+                int(getattr(settings, "speed_limit_percent", 100))
+            )
+        return 0
+
+    @property
+    def capacity_kbps(self) -> int:
+        """The measured link speed, or 0 while nothing has been observed."""
+        return self._capacity.estimate_kbps
+
+    @property
+    def global_limit_bytes(self) -> int:
+        """The rate the shared limiter is currently holding all transfers to."""
+        return self._limiter.limit_bytes_per_second
+
+    def _sample_capacity(self, active: int, speed: float) -> None:
+        """Feed the meter and let a percentage limit follow the measurement."""
+        if self._capacity_measuring and time.monotonic() >= self._capacity_measure_until:
+            self._finish_capacity_measurement()
+        if active <= 0 or speed <= 0:
+            return
+        limit = self._limiter.limit_bytes_per_second
+        capacity = self._capacity.estimate_bytes_per_second
+        if limit > 0 and speed >= limit * LIMIT_BINDING_RATIO:
+            # The cap, not the link, set this speed. With no earlier reading
+            # there is nothing to scale it back by, so a 500 KB/s limit would
+            # "measure" a 500 KB/s link and keep agreeing with itself.
+            if capacity <= 0:
+                return
+            fraction = limit / capacity
+        else:
+            fraction = None
+        if not self._capacity.add_sample(speed, fraction):
+            return
+
+        if (
+            not self._capacity_measuring
+            and getattr(self._settings, "speed_limit_mode", "") == SPEED_LIMIT_PERCENT
+        ):
+            self._limiter.set_limit_bytes(self._effective_limit_bytes())
+
+        now = time.monotonic()
+        if now - self._capacity_saved_at < _CAPACITY_SAVE_INTERVAL:
+            return
+        self._capacity_saved_at = now
+        self._settings.measured_capacity_kbps = self._capacity.estimate_kbps
+        self._settings.save()
+
+    def measure_capacity(self, seconds: float = MEASURE_WINDOW_SECONDS) -> bool:
+        """Lift the global limit briefly so the meter sees the real link.
+
+        A percentage limit cannot discover the ceiling it is pinned under, so
+        measuring needs a window without the limit.  Only the user starts one.
+        The window is closed by the stats tick rather than a timer of its own,
+        so a stalled event loop cannot leave the limiter switched off.
+        Returns False when there is nothing transferring to measure.
+        """
+        if self._capacity_measuring:
+            return False
+        if not any(item.is_active for item in self._items.values()):
+            return False
+        self._capacity_measuring = True
+        self._capacity_measure_until = time.monotonic() + max(1.0, float(seconds))
+        self._limiter.set_limit_bytes(0)
+        logger.info("Measuring link capacity for %d seconds", int(seconds))
+        return True
+
+    def _finish_capacity_measurement(self) -> None:
+        self._capacity_measuring = False
+        self._capacity_measure_until = 0.0
+        self._limiter.set_limit_bytes(self._effective_limit_bytes())
+        self._settings.measured_capacity_kbps = self._capacity.estimate_kbps
+        self._settings.save()
+        logger.info(
+            "Measured link capacity is %d KB/s", self._capacity.estimate_kbps
+        )
 
     def set_speed_limit(self, download_id: str, kbps: int) -> bool:
         item = self._items.get(download_id)
@@ -791,6 +914,119 @@ class DownloadManager(QObject):
         self.download_updated.emit(item)
         logger.info("Speed limit for %s set to %d KB/s", item.filename, limit)
         return True
+
+    # ------------------------------------------------------------------ file tools
+    def rename(self, download_id: str, new_name: str) -> str:
+        """Move a download's files to a new name.  Returns "" on success."""
+        item = self._items.get(download_id)
+        if item is None:
+            return "The download is no longer in the list."
+        if download_id in self._workers or item.is_active:
+            return "Stop the download before renaming the file."
+        name = sanitize_filename(str(new_name or "").strip(), fallback="")
+        if not name:
+            return "Enter a valid file name."
+        if name == item.filename:
+            return ""
+        folder = Path(item.folder)
+        target = folder / name
+        if target.exists():
+            return f"A file named {name} already exists in that folder."
+
+        partial = folder / f"{name}.idm.part"
+        moves = (
+            (item.path, target),
+            (item.part_path, partial),
+            (journal_path(item.part_path), journal_path(partial)),
+        )
+        moved: list[tuple[Path, Path]] = []
+        try:
+            for source, destination in moves:
+                if source.is_file():
+                    source.rename(destination)
+                    moved.append((destination, source))
+        except OSError as exc:
+            for destination, source in reversed(moved):
+                try:
+                    destination.rename(source)
+                except OSError:
+                    logger.warning(
+                        "Could not undo renaming %s back to %s", destination, source,
+                        exc_info=True,
+                    )
+            return f"Could not rename the file: {exc}"
+
+        previous = item.filename
+        item.filename = name
+        if Path(previous).suffix.lower() != Path(name).suffix.lower():
+            custom = getattr(self._settings, "custom_categories", [])
+            item.category = safe_category(
+                detect_category(name, item.content_type, custom), custom
+            )
+        self._save_item(item)
+        self._event(item.id, "renamed", 0)
+        self.download_updated.emit(item)
+        logger.info("Renamed %s to %s", previous, name)
+        return ""
+
+    def refresh_link(self, download_id: str, url: str) -> str:
+        """Point a stalled download at a re-probed link and queue it again."""
+        item = self._items.get(download_id)
+        if item is None:
+            return "The download is no longer in the list."
+        if download_id in self._workers:
+            return "Stop the download before refreshing its link."
+        try:
+            normalized = validate_url(url)
+        except InvalidUrlError as exc:
+            return str(exc)
+        item.url = normalized
+        item.error = ""
+        item.retry_count = 0
+        item.status = DownloadStatus.QUEUED
+        item.speed = 0.0
+        item.eta = None
+        item.queued_later = False
+        item.queue_seq = self._front_sequence()
+        self._network_waiting.discard(download_id)
+        self._save_item(item)
+        self._event(item.id, "link-refreshed", 0)
+        self.download_updated.emit(item)
+        self.queue_changed.emit()
+        self._pump()
+        logger.info("Refreshed the link of %s", item.filename)
+        return ""
+
+    def verify_checksum(self, download_id: str) -> str:
+        """Hash a completed file in the background.  Returns "" when started."""
+        item = self._items.get(download_id)
+        if item is None:
+            return "The download is no longer in the list."
+        if item.status != DownloadStatus.COMPLETED:
+            return "Only completed downloads can be verified."
+        if not item.path.is_file():
+            return "The downloaded file is no longer on disk."
+        if self._checksums.verify(item.id, item.path):
+            return ""
+        return "Verification is already running for this file."
+
+    def _on_checksum_finished(
+        self, download_id: str, digest: str, error: str
+    ) -> None:
+        item = self._items.get(download_id)
+        if item is None:
+            return
+        expected = normalize_sha256(item.expected_sha256)
+        if not error and expected:
+            item.checksum_status = "verified" if digest == expected else "mismatch"
+            if item.checksum_status == "verified":
+                item.integrity_verified_at = datetime.now(UTC).isoformat(
+                    timespec="seconds"
+                )
+            self._save_item(item)
+            self.download_updated.emit(item)
+            self._event(item.id, f"integrity-{item.checksum_status}", 0)
+        self.checksum_checked.emit(item, digest, error or item.checksum_status)
 
     # ------------------------------------------------------------------ worker callbacks
     def _on_worker_progress(
@@ -1070,6 +1306,7 @@ class DownloadManager(QObject):
     def _emit_stats(self, force: bool = False) -> None:
         active = sum(1 for item in self._items.values() if item.is_active)
         speed = sum(item.speed for item in self._items.values() if item.is_active)
+        self._sample_capacity(active, speed)
         queued = sum(1 for item in self._items.values() if item.status == DownloadStatus.QUEUED)
         snapshot = (active, round(speed, 1), queued)
         if force or snapshot != self._last_stats:
@@ -1079,9 +1316,12 @@ class DownloadManager(QObject):
     # ------------------------------------------------------------------ lifecycle
     def shutdown(self) -> None:
         self._shutting_down = True
+        if self._capacity_measuring:
+            self._finish_capacity_measurement()
         self._stats_timer.stop()
         self._persist_timer.stop()
         self._network_retry_timer.stop()
+        self._checksums.shutdown()
         self._flush_persistence()
         for item in self._items.values():
             self._save_item(item)
@@ -1099,6 +1339,9 @@ class DownloadManager(QObject):
         for item in self._items.values():
             self._save_item(item)
         self._flush_queue()
+        if self._capacity.has_estimate:
+            self._settings.measured_capacity_kbps = self._capacity.estimate_kbps
+            self._settings.save()
 
 
 def _looks_like_network_failure(message: str) -> bool:
@@ -1125,7 +1368,7 @@ def _item_from_record(record: dict) -> DownloadItem | None:
         url=url,
         filename=filename,
         folder=folder,
-        category=str(record.get("category") or "Other"),
+        category=str(record.get("category") or CATEGORY_GENERAL),
         priority=_optional_int(record.get("priority"), 1) or 1,
         status=status,
         total_bytes=_optional_int(record.get("total_bytes"), None),

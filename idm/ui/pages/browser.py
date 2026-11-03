@@ -26,6 +26,9 @@ from .common import Card, NoticeBanner, PageScroll
 _BROWSERS = (
     ("chrome", "Google Chrome"),
     ("edge", "Microsoft Edge"),
+    ("firefox", "Mozilla Firefox"),
+    ("brave", "Brave"),
+    ("opera", "Opera"),
 )
 
 _DIRECT_MEDIA_TYPES = (
@@ -94,6 +97,7 @@ class BrowserIntegrationPage(QWidget):
         self._settings = settings
         self._service = service
         self._checked = False
+        self._last_activity = ""
         self.setObjectName("PageArea")
 
         root = QVBoxLayout(self)
@@ -105,7 +109,7 @@ class BrowserIntegrationPage(QWidget):
         self._notice = NoticeBanner(
             theme,
             "IDM Video Assistant",
-            "The Chrome and Edge extension detects direct media links and sends "
+            "The Chromium extension detects direct media links and sends "
             "them to IDM through a local, validated native messaging connection. "
             "It does not read browsing history or download pages on its own.",
             "info",
@@ -143,7 +147,8 @@ class BrowserIntegrationPage(QWidget):
             theme,
             "Registered browsers",
             "Native messaging is registered for the current Windows user. "
-            "Chrome and Edge must be restarted after a change.",
+            "Chrome, Edge, Brave, Opera and Firefox must be restarted after "
+            "a change.",
         )
         self._rows: dict[str, _BrowserRow] = {}
         for browser, title in _BROWSERS:
@@ -195,7 +200,13 @@ class BrowserIntegrationPage(QWidget):
         extension_card.add_layout(extension_row)
         steps = QLabel(
             "Chrome: chrome://extensions → Developer mode → Load unpacked.  "
-            "Edge: edge://extensions → Developer mode → Load unpacked."
+            "Edge: edge://extensions → Developer mode → Load unpacked.  "
+            "Brave: brave://extensions → Developer mode → Load unpacked.  "
+            "Opera: opera://extensions → Developer mode → Load unpacked.  "
+            "Firefox: about:debugging → This Firefox → Load Temporary Add-on "
+            "and pick extensions/firefox/manifest.json; a temporary add-on is "
+            "unloaded on restart, so a signed add-on is needed for permanent "
+            "integration."
         )
         steps.setObjectName("HintLabel")
         steps.setWordWrap(True)
@@ -206,7 +217,56 @@ class BrowserIntegrationPage(QWidget):
         theme.changed.connect(self._refresh_icons)
         self._refresh_icons()
 
+        # The bridge reports every validated request, so an extension that
+        # starts talking is visible without pressing Refresh.
+        self._service.bridge_activity.connect(self._on_bridge_activity)
+        self._status_timer = QTimer(self)
+        self._status_timer.setInterval(4000)
+        self._status_timer.timeout.connect(self._refresh_bridge_status)
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        QTimer.singleShot(0, self.refresh)
+        self._status_timer.start()
+
+    def hideEvent(self, event) -> None:
+        self._status_timer.stop()
+        super().hideEvent(event)
+
+    def _on_bridge_activity(self, request_type: str) -> None:
+        self._last_activity = request_type
+        self._refresh_bridge_status()
+
     # ------------------------------------------------------------------ helpers
+    def _refresh_bridge_status(self) -> None:
+        listening = bool(self._service.is_listening)
+        bridge = self._service.bridge
+        port = bridge.port
+        connections = int(bridge.connection_count or 0)
+        activity = (
+            f" · last request: {self._last_activity.replace('_', ' ')}"
+            if self._last_activity
+            else ""
+        )
+        if listening:
+            detail = (
+                f"{connections} browser connection{'s' if connections != 1 else ''} active"
+                if connections
+                else "no browser connected yet"
+            )
+            location = f"127.0.0.1:{port}" if port else "local address"
+            self._bridge_status.setText(
+                f"Listening on {location} · {detail}{activity}"
+            )
+            self._bridge_status.setProperty("state", "ok")
+        else:
+            self._bridge_status.setText(
+                "The bridge is not running. Restart it or check the log."
+            )
+            self._bridge_status.setProperty("state", "error")
+        self._bridge_status.style().unpolish(self._bridge_status)
+        self._bridge_status.style().polish(self._bridge_status)
+
     def _extension_dir(self) -> Path:
         try:
             from integrations import registration
@@ -230,32 +290,9 @@ class BrowserIntegrationPage(QWidget):
         version = data.get("version")
         return str(version) if version else ""
 
-    def showEvent(self, event) -> None:
-        super().showEvent(event)
-        QTimer.singleShot(0, self.refresh)
-
     def refresh(self) -> None:
         self._checked = True
-        listening = bool(getattr(self._service, "is_listening", False))
-        bridge = getattr(self._service, "bridge", None)
-        port = getattr(bridge, "port", None)
-        connections = int(getattr(bridge, "connection_count", 0) or 0)
-        if listening:
-            detail = (
-                f"{connections} browser connection{'s' if connections != 1 else ''} active"
-                if connections
-                else "no browser connected yet"
-            )
-            location = f"127.0.0.1:{port}" if port else "local address"
-            self._bridge_status.setText(f"Listening on {location} · {detail}")
-            self._bridge_status.setProperty("state", "ok")
-        else:
-            self._bridge_status.setText(
-                "The bridge is not running. Restart it or check the log."
-            )
-            self._bridge_status.setProperty("state", "error")
-        self._bridge_status.style().unpolish(self._bridge_status)
-        self._bridge_status.style().polish(self._bridge_status)
+        self._refresh_bridge_status()
 
         folder = self._extension_dir()
         self._folder_label.setText(

@@ -74,7 +74,19 @@ def test_background_declares_its_browser_and_native_host(browser: str) -> None:
     text = (ROOT / "extensions" / browser / "background.js").read_text(
         encoding="utf-8"
     )
-    assert f'const BROWSER = "{browser}";' in text
+    if browser == "firefox":
+        # Gecko does not disguise itself as another browser, so the identity is
+        # a constant.
+        assert 'const BROWSER = "firefox";' in text
+    else:
+        # The same MV3 folder can be loaded into Brave or Opera, and the native
+        # host refuses a request that claims the wrong browser, so the
+        # extension has to report what it is actually running in.
+        assert "function detectBrowser()" in text
+        assert "const BROWSER = detectBrowser();" in text
+        assert 'return "brave";' in text
+        assert 'return "opera";' in text
+        assert f'return "{browser}";' in text
     assert 'const HOST_NAME = "com.idm.native";' in text
     assert 'type: "request_download"' in text
     assert "ask_folder" in text
@@ -158,6 +170,21 @@ def test_installer_registers_each_browser_and_ships_extension_zips() -> None:
     assert "allowed_extensions" in text
     assert "OutputBaseFilename=IDM-Setup-{#MyAppVersion}" in text
     assert f'#define MyAppVersion "{CURRENT_VERSION}"' in text
+
+
+def test_installer_and_native_host_agree_on_every_registry_key() -> None:
+    """A key the installer guesses differently registers the host nowhere."""
+    from integrations import NATIVE_HOST_NAME, registration
+
+    text = (ROOT / "installer" / "IDM_Setup.iss").read_text(encoding="utf-8")
+
+    for browser in registration.SUPPORTED_BROWSERS:
+        expected = registration.registry_subkey(browser).replace(
+            NATIVE_HOST_NAME, "{#NativeHostName}"
+        )
+        assert expected in text, f"{browser} key differs from the native host's"
+        assert f"WizardIsTaskSelected('{browser}')" in text, f"{browser} task missing"
+        assert f".{browser}.json" in text, f"{browser} manifest name missing"
 
 
 def test_package_release_uses_the_versioned_installer_name() -> None:

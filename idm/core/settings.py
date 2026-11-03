@@ -21,8 +21,16 @@ from downloads.location_manager import (
 )
 
 from ..constants import MAX_SPEED_LIMIT_KBPS
+from .bandwidth import MIN_SPEED_LIMIT_PERCENT, normalize_speed_limit_mode
 from .categories import normalize_category_paths, normalize_custom_categories
 from .database import Database
+from .network import (
+    MAX_CONNECT_TIMEOUT,
+    MAX_READ_TIMEOUT,
+    MIN_TIMEOUT,
+    normalize_proxy_mode,
+    normalize_site_auth,
+)
 from .paths import default_download_dir, settings_file
 
 logger = logging.getLogger(__name__)
@@ -38,10 +46,26 @@ _DEFAULTS: dict[str, Any] = {
     "max_retries": 3,
     "auto_resume_on_network": True,
     "speed_limit_kbps": 0,
+    "speed_limit_mode": "unlimited",
+    "speed_limit_percent": 50,
+    "measured_capacity_kbps": 0,
+    "proxy_mode": "system",
+    "proxy_host": "",
+    "proxy_port": 8080,
+    "proxy_username": "",
+    "proxy_use_auth": False,
+    "proxy_bypass": "",
+    "site_auth": [],
+    "connect_timeout": 15,
+    "read_timeout": 30,
     "confirm_delete": True,
     "show_completion_dialog": True,
     "start_immediately": True,
     "restore_session": True,
+    "start_with_windows": False,
+    "tray_enabled": True,
+    "tray_on_close": False,
+    "native_notifications": True,
     "show_toolbar": True,
     "show_sidebar": True,
     "show_status_bar": True,
@@ -92,10 +116,26 @@ class AppSettings:
         self.max_retries: int = _DEFAULTS["max_retries"]
         self.auto_resume_on_network: bool = _DEFAULTS["auto_resume_on_network"]
         self.speed_limit_kbps: int = _DEFAULTS["speed_limit_kbps"]
+        self.speed_limit_mode: str = _DEFAULTS["speed_limit_mode"]
+        self.speed_limit_percent: int = _DEFAULTS["speed_limit_percent"]
+        self.measured_capacity_kbps: int = _DEFAULTS["measured_capacity_kbps"]
+        self.proxy_mode: str = _DEFAULTS["proxy_mode"]
+        self.proxy_host: str = _DEFAULTS["proxy_host"]
+        self.proxy_port: int = _DEFAULTS["proxy_port"]
+        self.proxy_username: str = _DEFAULTS["proxy_username"]
+        self.proxy_use_auth: bool = _DEFAULTS["proxy_use_auth"]
+        self.proxy_bypass: str = _DEFAULTS["proxy_bypass"]
+        self.site_auth: list[dict[str, str]] = []
+        self.connect_timeout: int = _DEFAULTS["connect_timeout"]
+        self.read_timeout: int = _DEFAULTS["read_timeout"]
         self.confirm_delete: bool = _DEFAULTS["confirm_delete"]
         self.show_completion_dialog: bool = _DEFAULTS["show_completion_dialog"]
         self.start_immediately: bool = _DEFAULTS["start_immediately"]
         self.restore_session: bool = _DEFAULTS["restore_session"]
+        self.start_with_windows: bool = _DEFAULTS["start_with_windows"]
+        self.tray_enabled: bool = _DEFAULTS["tray_enabled"]
+        self.tray_on_close: bool = _DEFAULTS["tray_on_close"]
+        self.native_notifications: bool = _DEFAULTS["native_notifications"]
         self.show_toolbar: bool = _DEFAULTS["show_toolbar"]
         self.show_sidebar: bool = _DEFAULTS["show_sidebar"]
         self.show_status_bar: bool = _DEFAULTS["show_status_bar"]
@@ -177,6 +217,62 @@ class AppSettings:
             0,
             MAX_SPEED_LIMIT_KBPS,
         )
+        # A 3.6.2 settings file only knows the fixed KB/s limit, so a non-zero
+        # value there still means "limit at this rate" after the upgrade.
+        self.speed_limit_mode = normalize_speed_limit_mode(
+            values.get("speed_limit_mode"), self.speed_limit_kbps
+        )
+        self.speed_limit_percent = _coerce_int(
+            values.get("speed_limit_percent", _DEFAULTS["speed_limit_percent"]),
+            _DEFAULTS["speed_limit_percent"],
+            MIN_SPEED_LIMIT_PERCENT,
+            100,
+        )
+        self.measured_capacity_kbps = _coerce_int(
+            values.get(
+                "measured_capacity_kbps", _DEFAULTS["measured_capacity_kbps"]
+            ),
+            _DEFAULTS["measured_capacity_kbps"],
+            0,
+            MAX_SPEED_LIMIT_KBPS,
+        )
+        self.proxy_mode = normalize_proxy_mode(
+            values.get("proxy_mode", _DEFAULTS["proxy_mode"])
+        )
+        self.proxy_host = str(
+            values.get("proxy_host", _DEFAULTS["proxy_host"]) or ""
+        ).strip()[:255]
+        self.proxy_port = _coerce_int(
+            values.get("proxy_port", _DEFAULTS["proxy_port"]),
+            _DEFAULTS["proxy_port"],
+            1,
+            65535,
+        )
+        self.proxy_username = str(
+            values.get("proxy_username", _DEFAULTS["proxy_username"]) or ""
+        ).strip()[:513]
+        self.proxy_use_auth = _coerce_bool(
+            values.get("proxy_use_auth", _DEFAULTS["proxy_use_auth"]),
+            _DEFAULTS["proxy_use_auth"],
+        )
+        self.proxy_bypass = str(
+            values.get("proxy_bypass", _DEFAULTS["proxy_bypass"]) or ""
+        ).strip()[:2000]
+        self.site_auth = normalize_site_auth(
+            values.get("site_auth", _DEFAULTS["site_auth"])
+        )
+        self.connect_timeout = _coerce_int(
+            values.get("connect_timeout", _DEFAULTS["connect_timeout"]),
+            _DEFAULTS["connect_timeout"],
+            int(MIN_TIMEOUT),
+            int(MAX_CONNECT_TIMEOUT),
+        )
+        self.read_timeout = _coerce_int(
+            values.get("read_timeout", _DEFAULTS["read_timeout"]),
+            _DEFAULTS["read_timeout"],
+            int(MIN_TIMEOUT),
+            int(MAX_READ_TIMEOUT),
+        )
         self.confirm_delete = _coerce_bool(
             values.get("confirm_delete", _DEFAULTS["confirm_delete"]),
             _DEFAULTS["confirm_delete"],
@@ -194,6 +290,22 @@ class AppSettings:
         self.restore_session = _coerce_bool(
             values.get("restore_session", _DEFAULTS["restore_session"]),
             _DEFAULTS["restore_session"],
+        )
+        self.start_with_windows = _coerce_bool(
+            values.get("start_with_windows", _DEFAULTS["start_with_windows"]),
+            _DEFAULTS["start_with_windows"],
+        )
+        self.tray_enabled = _coerce_bool(
+            values.get("tray_enabled", _DEFAULTS["tray_enabled"]),
+            _DEFAULTS["tray_enabled"],
+        )
+        self.tray_on_close = _coerce_bool(
+            values.get("tray_on_close", _DEFAULTS["tray_on_close"]),
+            _DEFAULTS["tray_on_close"],
+        )
+        self.native_notifications = _coerce_bool(
+            values.get("native_notifications", _DEFAULTS["native_notifications"]),
+            _DEFAULTS["native_notifications"],
         )
         self.show_toolbar = _coerce_bool(
             values.get("show_toolbar", _DEFAULTS["show_toolbar"]),
@@ -325,11 +437,63 @@ class AppSettings:
                 0,
                 MAX_SPEED_LIMIT_KBPS,
             )
+        if "speed_limit_mode" in values:
+            self.speed_limit_mode = normalize_speed_limit_mode(
+                values["speed_limit_mode"], self.speed_limit_kbps
+            )
+        if "speed_limit_percent" in values:
+            self.speed_limit_percent = _coerce_int(
+                values["speed_limit_percent"],
+                self.speed_limit_percent,
+                MIN_SPEED_LIMIT_PERCENT,
+                100,
+            )
+        if "measured_capacity_kbps" in values:
+            self.measured_capacity_kbps = _coerce_int(
+                values["measured_capacity_kbps"],
+                self.measured_capacity_kbps,
+                0,
+                MAX_SPEED_LIMIT_KBPS,
+            )
+        if "proxy_mode" in values:
+            self.proxy_mode = normalize_proxy_mode(values["proxy_mode"])
+        if "proxy_host" in values:
+            self.proxy_host = str(values["proxy_host"] or "").strip()[:255]
+        if "proxy_port" in values:
+            self.proxy_port = _coerce_int(
+                values["proxy_port"], self.proxy_port, 1, 65535
+            )
+        if "proxy_username" in values:
+            self.proxy_username = str(values["proxy_username"] or "").strip()[:513]
+        if "proxy_use_auth" in values:
+            self.proxy_use_auth = bool(values["proxy_use_auth"])
+        if "proxy_bypass" in values:
+            self.proxy_bypass = str(values["proxy_bypass"] or "").strip()[:2000]
+        if "site_auth" in values:
+            self.site_auth = normalize_site_auth(values["site_auth"])
+        if "connect_timeout" in values:
+            self.connect_timeout = _coerce_int(
+                values["connect_timeout"],
+                self.connect_timeout,
+                int(MIN_TIMEOUT),
+                int(MAX_CONNECT_TIMEOUT),
+            )
+        if "read_timeout" in values:
+            self.read_timeout = _coerce_int(
+                values["read_timeout"],
+                self.read_timeout,
+                int(MIN_TIMEOUT),
+                int(MAX_READ_TIMEOUT),
+            )
         for key in (
             "confirm_delete",
             "show_completion_dialog",
             "start_immediately",
             "restore_session",
+            "start_with_windows",
+            "tray_enabled",
+            "tray_on_close",
+            "native_notifications",
             "show_toolbar",
             "show_sidebar",
             "show_status_bar",
@@ -407,10 +571,26 @@ class AppSettings:
             "max_retries": self.max_retries,
             "auto_resume_on_network": self.auto_resume_on_network,
             "speed_limit_kbps": self.speed_limit_kbps,
+            "speed_limit_mode": self.speed_limit_mode,
+            "speed_limit_percent": self.speed_limit_percent,
+            "measured_capacity_kbps": self.measured_capacity_kbps,
+            "proxy_mode": self.proxy_mode,
+            "proxy_host": self.proxy_host,
+            "proxy_port": self.proxy_port,
+            "proxy_username": self.proxy_username,
+            "proxy_use_auth": self.proxy_use_auth,
+            "proxy_bypass": self.proxy_bypass,
+            "site_auth": [dict(entry) for entry in self.site_auth],
+            "connect_timeout": self.connect_timeout,
+            "read_timeout": self.read_timeout,
             "confirm_delete": self.confirm_delete,
             "show_completion_dialog": self.show_completion_dialog,
             "start_immediately": self.start_immediately,
             "restore_session": self.restore_session,
+            "start_with_windows": self.start_with_windows,
+            "tray_enabled": self.tray_enabled,
+            "tray_on_close": self.tray_on_close,
+            "native_notifications": self.native_notifications,
             "show_toolbar": self.show_toolbar,
             "show_sidebar": self.show_sidebar,
             "show_status_bar": self.show_status_bar,

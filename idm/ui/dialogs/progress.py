@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import time
+
 from PySide6.QtCore import Qt, QTimer, QUrl, Signal
 from PySide6.QtWidgets import (
     QFrame,
@@ -20,6 +22,7 @@ from ...core.url_utils import format_eta, format_size, format_speed
 from ...engine.manager import DownloadManager
 from ...models.download_item import DownloadItem, DownloadStatus
 from .. import icons
+from ..components import SpeedGraph
 from ..theme import ThemeManager
 from .common import (
     BaseDialog,
@@ -104,6 +107,11 @@ class DownloadProgressDialog(BaseDialog):
         self._error.setWordWrap(True)
         self._error.hide()
         root.addWidget(self._error)
+
+        root.addWidget(make_label("SPEED OVER TIME", "FieldLabel"))
+        self._graph = SpeedGraph(self._theme)
+        self._last_graph_sample = 0.0
+        root.addWidget(self._graph)
 
         root.addWidget(make_label("CONNECTIONS", "FieldLabel"))
         self._connections_container = QFrame()
@@ -266,8 +274,33 @@ class DownloadProgressDialog(BaseDialog):
         completed = item.status == DownloadStatus.COMPLETED
         self._folder_button.setVisible(completed)
         self._folder_button.setEnabled(completed)
+        self._sample_graph(item)
         self._update_connections(item, percent)
         self._update_limit(item, completed)
+
+    # ------------------------------------------------------------------ speed graph
+    def _sample_graph(self, item: DownloadItem) -> None:
+        """Plot one point per second so the curve is time, not refresh count."""
+        if not item.is_active:
+            return
+        now = time.monotonic()
+        if now - self._last_graph_sample < 1.0:
+            return
+        self._last_graph_sample = now
+        self._graph.add_sample(item.speed)
+        self._graph.set_limit(self._effective_limit(item))
+
+    def _effective_limit(self, item: DownloadItem) -> float:
+        """The binding cap: whichever of the two limits is tighter."""
+        candidates = [
+            value
+            for value in (
+                int(item.speed_limit_kbps) * 1024,
+                int(self._manager.global_limit_bytes),
+            )
+            if value > 0
+        ]
+        return min(candidates) if candidates else 0.0
 
     # ------------------------------------------------------------------ connections
     def _update_connections(self, item: DownloadItem, percent: int) -> None:

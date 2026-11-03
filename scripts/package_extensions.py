@@ -79,11 +79,23 @@ def validate_extension(browser: str) -> dict:
         raise PackagingError(f"{browser}: manifest version must be MAJOR.MINOR.PATCH.")
 
     background = (folder / "background.js").read_text(encoding="utf-8")
-    expected_constant = f'const BROWSER = "{browser}";'
-    if expected_constant not in background:
-        raise PackagingError(
-            f"{browser}: background.js must declare {expected_constant}"
-        )
+    if browser == "firefox":
+        expected_constant = 'const BROWSER = "firefox";'
+        if expected_constant not in background:
+            raise PackagingError(
+                f"{browser}: background.js must declare {expected_constant}"
+            )
+    else:
+        # The MV3 folder is also loaded in Brave and Opera, which the native host
+        # distinguishes by the browser each request claims.
+        if "const BROWSER = detectBrowser();" not in background:
+            raise PackagingError(
+                f"{browser}: background.js must resolve BROWSER with detectBrowser()."
+            )
+        if f'return "{browser}";' not in background:
+            raise PackagingError(
+                f"{browser}: detectBrowser() must fall back to \"{browser}\"."
+            )
 
     if browser in {"chrome", "edge"}:
         if manifest.get("manifest_version") != 3:

@@ -17,19 +17,25 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
+from typing import Mapping
 
-SUPPORTED_BROWSERS = ("chrome", "edge", "firefox")
+SUPPORTED_BROWSERS = ("chrome", "edge", "firefox", "brave", "opera")
 
 _DISPLAY_NAMES = {
     "chrome": "Google Chrome",
     "edge": "Microsoft Edge",
     "firefox": "Mozilla Firefox",
+    "brave": "Brave",
+    "opera": "Opera",
 }
 
 _PROCESS_NAMES = {
     "chrome.exe": "chrome",
     "msedge.exe": "edge",
     "firefox.exe": "firefox",
+    "brave.exe": "brave",
+    "opera.exe": "opera",
+    "opera_launcher.exe": "opera",
 }
 
 _MAX_ANCESTOR_LEVELS = 8
@@ -99,20 +105,8 @@ def _windows_process_table() -> dict[int, tuple[int, str]]:
         return {}
 
 
-def detect_calling_browser() -> str:
-    """Walk the parent chain and return chrome/edge/firefox, or an empty string."""
-    if sys.platform != "win32":
-        return ""
-    table = _windows_process_table()
-    if not table:
-        return ""
-    try:
-        import ctypes
-
-        pid = int(ctypes.windll.kernel32.GetCurrentProcessId())
-    except Exception:
-        return ""
-
+def _browser_from_chain(pid: int, table: Mapping[int, tuple[int, str]]) -> str:
+    """Walk up from ``pid`` until a known browser process is found."""
     seen: set[int] = set()
     for _ in range(_MAX_ANCESTOR_LEVELS):
         if pid in seen or pid <= 0:
@@ -124,6 +118,22 @@ def detect_calling_browser() -> str:
             return browser
         pid = parent
     return ""
+
+
+def detect_calling_browser() -> str:
+    """Walk the parent chain and return a supported browser key, or empty."""
+    if sys.platform != "win32":
+        return ""
+    table = _windows_process_table()
+    if not table:
+        return ""
+    try:
+        import ctypes
+
+        pid = int(ctypes.windll.kernel32.GetCurrentProcessId())
+    except Exception:
+        return ""
+    return _browser_from_chain(pid, table)
 
 
 # ---------------------------------------------------------------------------
@@ -198,6 +208,35 @@ def detect_installed_browsers() -> dict[str, str]:
     )
     if firefox:
         found["firefox"] = firefox
+
+    brave = _app_path("brave.exe") or _first_existing(
+        [
+            os.path.join(
+                local_app_data, r"BraveSoftware\Brave-Browser\Application\brave.exe"
+            ),
+            os.path.join(
+                program_files, r"BraveSoftware\Brave-Browser\Application\brave.exe"
+            ),
+            os.path.join(
+                program_files_x86, r"BraveSoftware\Brave-Browser\Application\brave.exe"
+            ),
+        ]
+    )
+    if brave:
+        found["brave"] = brave
+
+    opera = _app_path("opera.exe") or _app_path("opera_launcher.exe") or _first_existing(
+        [
+            os.path.join(local_app_data, r"Programs\Opera\launcher.exe"),
+            os.path.join(local_app_data, r"Programs\Opera\opera.exe"),
+            os.path.join(program_files, r"Opera\Opera\launcher.exe"),
+            os.path.join(program_files, r"Opera\Opera\opera.exe"),
+            os.path.join(program_files_x86, r"Opera\Opera\launcher.exe"),
+            os.path.join(program_files_x86, r"Opera\Opera\opera.exe"),
+        ]
+    )
+    if opera:
+        found["opera"] = opera
 
     return found
 

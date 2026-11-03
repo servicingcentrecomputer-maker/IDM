@@ -31,12 +31,17 @@ if os.name == "nt":  # pragma: no cover - exercised on Windows
 else:  # pragma: no cover
     winreg = None  # type: ignore[assignment]
 
-SUPPORTED_BROWSERS = ("chrome", "edge", "firefox")
+SUPPORTED_BROWSERS = ("chrome", "edge", "firefox", "brave", "opera")
 
+# Verified against the keys each browser creates itself on this machine.
+# Opera's root is named after the installed channel; "Opera Stable" is the
+# mainline browser and Opera GX uses its own "Opera GX Stable" root.
 _REGISTRY_ROOTS = {
     "chrome": r"Software\Google\Chrome\NativeMessagingHosts",
     "edge": r"Software\Microsoft\Edge\NativeMessagingHosts",
     "firefox": r"Software\Mozilla\NativeMessagingHosts",
+    "brave": r"Software\BraveSoftware\Brave-Browser\NativeMessagingHosts",
+    "opera": r"Software\Opera Software\Opera Stable\NativeMessagingHosts",
 }
 
 

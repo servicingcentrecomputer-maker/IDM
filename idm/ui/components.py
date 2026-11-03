@@ -43,6 +43,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ..core.url_utils import format_speed
 from . import animations, design, icons
 from .theme import ThemeManager
 
@@ -592,6 +593,163 @@ class ActivityChart(QWidget):
             QRectF(chart.left(), chart.top() - 2, 80, label_height),
             int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop),
             f"peak {maximum}",
+        )
+
+
+# ---------------------------------------------------------------------------
+# Speed history
+# ---------------------------------------------------------------------------
+
+
+class SpeedGraph(QWidget):
+    """Speed over the last few minutes for a single download.
+
+    A number in a label tells you what the transfer is doing right now; this
+    tells you whether it is steady, stalling or being held back by a limit,
+    which is the difference between a slow server and a limit you forgot about.
+    """
+
+    def __init__(self, theme: ThemeManager, max_points: int = 120, parent=None) -> None:
+        super().__init__(parent)
+        self._theme = theme
+        self._capacity = max(8, int(max_points))
+        self._speeds: list[float] = []
+        self._limit = 0.0
+        self.setMinimumHeight(118)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        theme.changed.connect(self.update)
+
+    # ------------------------------------------------------------------ data
+    def add_sample(self, bytes_per_second: float) -> None:
+        self._speeds.append(max(0.0, float(bytes_per_second)))
+        if len(self._speeds) > self._capacity:
+            del self._speeds[0 : len(self._speeds) - self._capacity]
+        self.update()
+
+    def set_limit(self, bytes_per_second: float) -> None:
+        self._limit = max(0.0, float(bytes_per_second))
+        self.update()
+
+    def reset(self) -> None:
+        self._speeds.clear()
+        self.update()
+
+    @property
+    def peak_bytes_per_second(self) -> float:
+        return max(self._speeds) if self._speeds else 0.0
+
+    @property
+    def average_bytes_per_second(self) -> float:
+        return sum(self._speeds) / len(self._speeds) if self._speeds else 0.0
+
+    @property
+    def sample_count(self) -> int:
+        return len(self._speeds)
+
+    # ------------------------------------------------------------------ painting
+    def paintEvent(self, event) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        p = self._theme.palette
+        box = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
+        painter.setPen(QPen(QColor(p.border_soft), 1))
+        painter.setBrush(QColor(p.surface))
+        painter.drawRoundedRect(box, design.RADIUS_PX["sm"], design.RADIUS_PX["sm"])
+
+        label_font = QFont(self.font())
+        label_font.setPointSizeF(max(7.5, self.font().pointSizeF() - 1.5))
+        painter.setFont(label_font)
+        metrics = painter.fontMetrics()
+        text_height = metrics.height() + 3
+        chart = QRectF(
+            box.left() + 10,
+            box.top() + text_height + 6,
+            box.width() - 20,
+            box.height() - text_height * 2 - 14,
+        )
+
+        if not self._speeds:
+            painter.setPen(QColor(p.text_faint))
+            painter.drawText(
+                chart,
+                int(Qt.AlignmentFlag.AlignCenter),
+                "Waiting for the first speed reading.",
+            )
+            return
+
+        # The peak always fits and the axis never jumps around for a single
+        # stray sample, so the curve stays comparable while it is being watched.
+        maximum = max(self.peak_bytes_per_second, self._limit, 1.0) * 1.12
+        baseline = chart.bottom()
+
+        painter.setPen(QPen(QColor(p.border_soft), 1, Qt.PenStyle.DotLine))
+        for fraction in (0.5, 1.0):
+            y = baseline - chart.height() * fraction
+            painter.drawLine(
+                QPointF(chart.left(), y), QPointF(chart.right(), y)
+            )
+
+        # The readings span the whole width: a download that ran for six seconds
+        # should not draw its curve into the last tenth of the panel.
+        count = len(self._speeds)
+        step = chart.width() / max(1, count - 1)
+        points = [
+            QPointF(
+                chart.left() + step * index,
+                baseline - chart.height() * min(1.0, value / maximum),
+            )
+            for index, value in enumerate(self._speeds)
+        ]
+        if count == 1:
+            points[0] = QPointF(chart.right(), points[0].y())
+
+        area = QPolygonF(points)
+        if len(area) >= 2:
+            area.append(QPointF(area[-1].x(), baseline))
+            area.append(QPointF(area[0].x(), baseline))
+            gradient = QLinearGradient(0, chart.top(), 0, baseline)
+            fill = QColor(p.accent)
+            fill.setAlpha(70)
+            empty = QColor(p.accent)
+            empty.setAlpha(10)
+            gradient.setColorAt(0.0, fill)
+            gradient.setColorAt(1.0, empty)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QBrush(gradient))
+            painter.drawPolygon(area)
+
+        if self._limit > 0:
+            y = baseline - chart.height() * min(1.0, self._limit / maximum)
+            painter.setPen(
+                QPen(QColor(p.warning), 1, Qt.PenStyle.DashLine)
+            )
+            painter.drawLine(QPointF(chart.left(), y), QPointF(chart.right(), y))
+
+        if len(points) >= 2:
+            painter.setPen(QPen(QColor(p.accent), 2))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawPolyline(QPolygonF(points))
+        painter.setPen(QColor(p.accent))
+        painter.drawEllipse(points[-1], 3.0, 3.0)
+
+        painter.setPen(QColor(p.text_muted))
+        painter.drawText(
+            QRectF(chart.left(), box.top() + 2, chart.width(), text_height),
+            int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
+            f"now {format_speed(self._speeds[-1])}",
+        )
+        painter.drawText(
+            QRectF(chart.left(), box.top() + 2, chart.width(), text_height),
+            int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter),
+            f"peak {format_speed(self.peak_bytes_per_second)}",
+        )
+        footer = f"average {format_speed(self.average_bytes_per_second)}"
+        if self._limit > 0:
+            footer += f"   ·   limit {format_speed(self._limit)}"
+        painter.drawText(
+            QRectF(chart.left(), baseline + 4, chart.width(), text_height),
+            int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
+            footer,
         )
 
 

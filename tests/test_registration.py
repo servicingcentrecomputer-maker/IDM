@@ -118,6 +118,12 @@ def test_registry_subkeys_match_browser_documentation() -> None:
     assert registration.registry_subkey("firefox") == (
         rf"Software\Mozilla\NativeMessagingHosts\{NATIVE_HOST_NAME}"
     )
+    assert registration.registry_subkey("brave") == (
+        rf"Software\BraveSoftware\Brave-Browser\NativeMessagingHosts\{NATIVE_HOST_NAME}"
+    )
+    assert registration.registry_subkey("opera") == (
+        rf"Software\Opera Software\Opera Stable\NativeMessagingHosts\{NATIVE_HOST_NAME}"
+    )
     with pytest.raises(registration.RegistrationError):
         registration.registry_subkey("safari")
 
@@ -156,6 +162,25 @@ def test_install_firefox_uses_allowed_extensions(fake_registry, host) -> None:
     manifest = json.loads(Path(result["manifest"]).read_text(encoding="utf-8"))
     assert manifest["allowed_extensions"] == [FIREFOX_EXTENSION_ID]
     assert "allowed_origins" not in manifest
+
+
+@pytest.mark.parametrize("browser", registration.SUPPORTED_BROWSERS)
+def test_every_supported_browser_registers_and_verifies(
+    fake_registry, host, browser
+) -> None:
+    """Brave and Opera must not be second-class browsers."""
+    result = registration.install_browser(browser, host)
+    assert result["ok"] is True
+    manifest = json.loads(Path(result["manifest"]).read_text(encoding="utf-8"))
+    assert manifest["name"] == NATIVE_HOST_NAME
+    assert Path(manifest["path"]) == host
+
+    status = registration.browser_status(browser)
+    assert status["installed"] is True, status["problems"]
+    assert status["problems"] == []
+
+    assert registration.uninstall_browser(browser)["ok"] is True
+    assert registration.browser_status(browser)["installed"] is False
 
 
 def test_install_rejects_a_missing_or_relative_host(fake_registry, tmp_path) -> None:

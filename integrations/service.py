@@ -38,6 +38,7 @@ from .browser_detector import browser_display_name
 from .protocol import (
     DuplicateTracker,
     ValidationError,
+    normalize_capture_request,
     normalize_download_request,
     require_browser,
     require_extension_id,
@@ -54,15 +55,22 @@ DownloadSubmit = Callable[[dict[str, Any]], DownloadItem]
 DownloadPrompt = Callable[
     [dict[str, Any], DownloadSubmit], tuple[dict[str, Any], DownloadItem] | None
 ]
+CapturePrompt = Callable[[dict[str, Any]], list[dict[str, str]] | None]
 
 _MAX_LISTED_DOWNLOADS = 25
 _STATUS_DOWNLOAD_LIMIT = 5
+# Page capture answers list every file in one reply; a longer list would make
+# the native messaging frame needlessly large for the extension popup.
+_MAX_REPORTED_CAPTURES = 20
 
 
 class BrowserIntegrationService(QObject):
     download_accepted = Signal(object)  # DownloadItem
     message = Signal(str)
     bridge_failed = Signal(str)
+    # Emitted for every validated request the bridge accepts, so the UI can
+    # show that a browser is really talking to IDM without polling.
+    bridge_activity = Signal(str)
 
     def __init__(
         self,
@@ -72,6 +80,7 @@ class BrowserIntegrationService(QObject):
         folder_prompt: FolderPrompt | None = None,
         create_prompt: CreatePrompt | None = None,
         download_prompt: DownloadPrompt | None = None,
+        capture_prompt: CapturePrompt | None = None,
         raise_window: SimpleCallback | None = None,
         open_settings: SimpleCallback | None = None,
         parent: QObject | None = None,
@@ -83,6 +92,7 @@ class BrowserIntegrationService(QObject):
         self._folder_prompt = folder_prompt
         self._create_prompt = create_prompt
         self._download_prompt = download_prompt
+        self._capture_prompt = capture_prompt
         self._raise_window = raise_window
         self._open_settings = open_settings
         self._dedupe = DuplicateTracker()
@@ -174,6 +184,8 @@ class BrowserIntegrationService(QObject):
             return self._status_response(_request_id(request), browser)
         if message_type == "request_download":
             return self._accept_download(request, browser)
+        if message_type == "capture_page_links":
+            return self._accept_capture(request, browser)
         if message_type == "list_downloads":
             limit = request.get("limit", _MAX_LISTED_DOWNLOADS)
             try:
@@ -447,6 +459,126 @@ class BrowserIntegrationService(QObject):
             redact_url(normalized["url"]),
         )
         self._announce_accepted(item, normalized, browser)
+        return response
+
+    def _accept_capture(
+        self, request: dict[str, Any], browser: str
+    ) -> dict[str, Any]:
+        """Queue the links a page capture selected.
+
+        The whole page is confirmed once and, in ask-every-time mode, answered
+        with one folder: a hundred links must not become a hundred dialogs.
+        """
+        normalized = normalize_capture_request(request)
+        request_id = normalized["request_id"]
+        now = time.monotonic()
+        cached = self._dedupe.get(request_id, now)
+        if cached is not None:
+            return cached
+
+        links = normalized["links"]
+        if self._capture_prompt is not None:
+            chosen = self._capture_prompt(
+                {
+                    "page_url": normalized["page_url"],
+                    "page_title": normalized["page_title"],
+                    "browser_display": browser_display_name(browser),
+                    "links": links,
+                }
+            )
+            if chosen is None:
+                return self._remember(
+                    request_id,
+                    response_error(
+                        request_id, "cancelled", "The page capture was cancelled in IDM."
+                    ),
+                    now,
+                )
+            selected = [entry for entry in chosen if entry.get("url")]
+        else:
+            selected = links
+
+        config: DownloadLocationConfig = self._settings.location_config.normalized()
+        default_folder = self._settings.download_dir.strip() or environment_default_folder()
+        memo: dict[str, str] = {}
+
+        def ask_once(filename: str, suggested: str) -> str | None:
+            if "folder" not in memo:
+                chosen_folder = self._ask_for_folder(filename, suggested, browser)
+                if not chosen_folder:
+                    return None
+                memo["folder"] = chosen_folder
+            return memo["folder"]
+
+        added: list[dict[str, Any]] = []
+        skipped = rejected = 0
+        for entry in selected:
+            url = str(entry["url"])
+            filename = str(entry.get("filename") or "") or guess_filename(url, "download")
+            if self._manager.find_active_by_url(url) is not None:
+                skipped += 1
+                continue
+            try:
+                folder, safe_name = resolve_destination(
+                    config,
+                    filename,
+                    default_folder,
+                    ask=ask_once,
+                    approve_create=self._create_prompt,
+                )
+                item = self._manager.add_download(
+                    url=url,
+                    filename=safe_name,
+                    folder=folder,
+                    start_immediately=bool(self._settings.start_immediately),
+                    source_browser=browser,
+                    referrer=normalized["page_url"],
+                    page_url=normalized["page_url"],
+                    page_title=normalized["page_title"],
+                    detected_by="link",
+                )
+            except LocationError as exc:
+                if exc.code == "cancelled":
+                    # The user backed out of the folder prompt; stop the batch
+                    # rather than falling back to a folder they did not choose.
+                    raise
+                rejected += 1
+                logger.info("Capture skipped %s: %s", redact_url(url), exc)
+                continue
+            except (ValueError, OSError) as exc:
+                rejected += 1
+                logger.info("Capture skipped %s: %s", redact_url(url), exc)
+                continue
+            added.append(self._download_payload(item))
+
+        logger.info(
+            "Page capture from %s added %s of %s links (%s already active, %s rejected)",
+            redact_url(normalized["page_url"]) or normalized["page_url"] or "the page",
+            len(added),
+            len(selected),
+            skipped,
+            rejected,
+        )
+        response = response_ok(
+            request_id,
+            "page_captured",
+            requested=len(selected),
+            added=len(added),
+            skipped=skipped,
+            rejected=rejected,
+            downloads=added[:_MAX_REPORTED_CAPTURES],
+        )
+        if added:
+            self.message.emit(
+                f"Captured {len(added)} link{'s' if len(added) != 1 else ''} from "
+                f"{normalized['page_title'] or normalized['page_url'] or 'the page'}."
+            )
+        return self._remember(request_id, response, now)
+
+    def _remember(
+        self, request_id: str, response: dict[str, Any], now: float
+    ) -> dict[str, Any]:
+        self._dedupe.put(request_id, response, now)
         return response
 
     def _announce_accepted(

@@ -23,9 +23,12 @@ from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
     QComboBox,
+    QDialog,
     QFileDialog,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
+    QLineEdit,
     QMainWindow,
     QMenu,
     QMessageBox,
@@ -44,10 +47,12 @@ from ..constants import (
     custom_category_key,
     custom_category_name,
 )
+from ..core import startup
 from ..core.paths import last_rollback_plan_file, updater_log_file
+from ..core.probe import LinkProbe
 from ..core.scheduler import DownloadScheduler
 from ..core.settings import AppSettings
-from ..core.url_utils import category_for_filename, guess_filename
+from ..core.url_utils import category_for_filename, format_speed, guess_filename
 from ..engine.manager import DownloadManager
 from ..models.download_item import DownloadItem, DownloadStatus
 from ..models.table_model import (
@@ -93,11 +98,14 @@ from integrations.paths import native_manifest_dir
 from integrations.service import BrowserIntegrationService
 from . import design, icons
 from .dialogs.about import AboutDialog
+from .dialogs.batch_urls import BatchUrlsDialog
+from .dialogs.page_links import PageLinksDialog
 from .dialogs.categories import CategoryManagerDialog
 from .dialogs.complete import DownloadCompleteDialog
 from .dialogs.download_file_info import AddDownloadDialog
 from .dialogs.options import OptionsDialog
 from .dialogs.progress import DownloadProgressDialog
+from .dialogs.properties import DownloadPropertiesDialog
 from .dialogs.queue import QueueDialog
 from .dialogs.scheduler import SchedulerDialog
 from .dialogs.update_notification import UpdateNotificationDialog
@@ -117,6 +125,7 @@ from .sidebar import Sidebar
 from .status_bar import StatusBar
 from .theme import THEME_LABELS, THEME_ORDER, ThemeManager
 from .toolbar import DownloadToolbar
+from .tray import TrayController
 from .update_scheduler import UpdateScheduler
 
 logger = logging.getLogger(__name__)
@@ -134,6 +143,7 @@ _FILTER_TITLES = {
     "videos": "Videos",
     "programs": "Programs",
     "compressed": "Compressed Files",
+    "general": "General",
     "other": "Other Files",
 }
 
@@ -169,6 +179,22 @@ _SECTION_SUBTITLES = {
 
 _RESUMABLE_ALL = {DownloadStatus.PAUSED, DownloadStatus.STOPPED}
 
+# Windows runs these straight from Explorer, so an "Open" click on a download
+# that turned out to be a program is confirmed first.
+_EXECUTABLE_SUFFIXES = {
+    ".exe",
+    ".msi",
+    ".cmd",
+    ".bat",
+    ".ps1",
+    ".vbs",
+    ".js",
+    ".jar",
+    ".scr",
+    ".com",
+    ".pif",
+}
+
 _SEARCH_MIN_WIDTH = 1240
 _TOOLBAR_COMPACT_BELOW = 1400
 _TOOLBAR_OVERFLOW_BELOW = 1120
@@ -193,6 +219,10 @@ class MainWindow(QMainWindow):
         self._progress_dialogs: dict[str, DownloadProgressDialog] = {}
         self._completion_dialogs: dict[str, DownloadCompleteDialog] = {}
         self._update_notification = None
+        self._tray: TrayController | None = None
+        self._quitting = False
+        self._tray_hint_shown = False
+        self._link_probe: LinkProbe | None = None
         self._update_window = None
         self._last_content_key = "all"
         self._custom_names: tuple[str, ...] = ()
@@ -215,6 +245,7 @@ class MainWindow(QMainWindow):
             folder_prompt=self._prompt_browser_folder,
             create_prompt=self._confirm_create_folder,
             download_prompt=self._prompt_browser_download,
+            capture_prompt=self._prompt_browser_capture,
             raise_window=self._raise_for_browser,
             open_settings=self._open_browser_settings,
             parent=self,
@@ -266,6 +297,7 @@ class MainWindow(QMainWindow):
             logger.warning("Browser integration is unavailable in this session")
 
         self._theme.apply_window_chrome(self)
+        self._build_tray()
         self._update_scheduler.start()
         self._schedule_update_recovery()
         logger.info("Main window ready")
@@ -282,6 +314,10 @@ class MainWindow(QMainWindow):
             "Ctrl+N", "add",
         )
         self._add_action(
+            file_menu, "batch_add", "Add Batch Downloads…",
+            self._add_batch_downloads, "Ctrl+Shift+U", "add_url",
+        )
+        self._add_action(
             file_menu, "import", "Import Downloads…", self._import_downloads,
             "Ctrl+Shift+I", "import",
         )
@@ -291,7 +327,7 @@ class MainWindow(QMainWindow):
         )
         file_menu.addSeparator()
         self._add_action(
-            file_menu, "exit", "Exit", self.close, "Ctrl+Q", "exit"
+            file_menu, "exit", "Exit", self._quit_application, "Ctrl+Q", "exit"
         )
 
         downloads_menu = bar.addMenu("&Downloads")
@@ -318,6 +354,32 @@ class MainWindow(QMainWindow):
         self._add_action(
             downloads_menu, "stop_all", "Stop All", self._stop_all,
             None, "stop_all",
+        )
+        downloads_menu.addSeparator()
+        self._add_action(
+            downloads_menu, "rename", "Rename…", self._rename_selected,
+            "F2", "file_text",
+        )
+        self._add_action(
+            downloads_menu, "refresh_link", "Refresh Download Link",
+            self._refresh_selected_link, None, "link",
+        )
+        self._add_action(
+            downloads_menu, "verify_checksum", "Verify Checksum",
+            self._verify_selected_checksum, None, "shield",
+        )
+        downloads_menu.addSeparator()
+        self._add_action(
+            downloads_menu, "open_file", "Open", self._open_selected_file,
+            "Ctrl+O", "play",
+        )
+        self._add_action(
+            downloads_menu, "open_folder", "Open Containing Folder",
+            self._open_selected_folder, None, "folder_open",
+        )
+        self._add_action(
+            downloads_menu, "properties", "Properties…",
+            self._show_selected_properties, None, "info",
         )
         downloads_menu.addSeparator()
         self._add_action(
@@ -627,6 +689,7 @@ class MainWindow(QMainWindow):
         self._manager.stats_changed.connect(self._on_stats_changed)
         self._manager.download_completed.connect(self._on_download_completed)
         self._manager.download_failed.connect(self._on_download_failed)
+        self._manager.checksum_checked.connect(self._on_checksum_checked)
 
         self._scheduler.schedule_fired.connect(
             lambda action: self._status_bar.show_message(
@@ -742,7 +805,8 @@ class MainWindow(QMainWindow):
             "Browser integration",
             "Install the IDM native messaging host from this page, then load the "
             "unpacked extension from BrowserExtension/IDMVideoAssistant in "
-            "chrome://extensions (Developer mode) or edge://extensions.\n\n"
+            "chrome://extensions, edge://extensions, brave://extensions or "
+            "opera://extensions (Developer mode).\n\n"
             "IDM never installs a browser extension silently.",
         )
 
@@ -837,6 +901,22 @@ class MainWindow(QMainWindow):
         self._actions["delete"].setEnabled(bool(items))
         self._actions["delete_completed"].setEnabled(completed_exists)
         self._actions["export"].setEnabled(bool(all_items))
+        single = len(items) == 1
+        self._actions["rename"].setEnabled(
+            single and not any(item.is_active for item in items)
+        )
+        self._actions["refresh_link"].setEnabled(
+            single
+            and items[0].status in {DownloadStatus.FAILED, DownloadStatus.STOPPED,
+                                    DownloadStatus.PAUSED}
+        )
+        self._actions["verify_checksum"].setEnabled(
+            single and items[0].status == DownloadStatus.COMPLETED
+        )
+        self._actions["open_file"].setEnabled(single and items[0].path.is_file())
+        self._actions["open_folder"].setEnabled(single)
+        self._actions["properties"].setEnabled(single)
+        self._refresh_tray_state()
 
     def _select_item(self, download_id: str) -> None:
         source_row = self._model.row_for_id(download_id)
@@ -1012,20 +1092,63 @@ class MainWindow(QMainWindow):
         self._update_actions()
 
     def _delete_completed(self) -> None:
+        completed = [
+            item
+            for item in self._manager.items()
+            if item.status == DownloadStatus.COMPLETED
+        ]
+        if not completed:
+            self._status_bar.show_message(
+                "There are no completed downloads to clear."
+            )
+            return
+        if self._settings.confirm_delete and not self._ask_clear_completed(
+            len(completed)
+        ):
+            return
+
         count = self._manager.delete_completed()
         if count:
             self._status_bar.show_message(
                 f"Cleared {count} completed download{'s' if count != 1 else ''}. "
                 "Files were kept."
             )
-        else:
-            self._status_bar.show_message(
-                "There are no completed downloads to clear."
-            )
+        self._update_actions()
+
+    def _ask_clear_completed(self, count: int) -> bool:
+        # The completed entries are the only record of where these files came
+        # from, so clearing them is as hard to undo as removing a selection.
+        message = QMessageBox(self)
+        message.setWindowTitle("Clear completed downloads")
+        message.setIcon(QMessageBox.Icon.Question)
+        message.setText(
+            f"Remove {count} completed download{'s' if count != 1 else ''} from the list?"
+        )
+        message.setInformativeText("The downloaded files stay on disk.")
+        message.setStandardButtons(
+            QMessageBox.StandardButton.Cancel | QMessageBox.StandardButton.Ok
+        )
+        message.button(QMessageBox.StandardButton.Ok).setText("Remove")
+        message.setDefaultButton(QMessageBox.StandardButton.Cancel)
+        return message.exec() == QMessageBox.StandardButton.Ok
 
     def _open_options(self, initial_tab: int = 0) -> None:
+        # The HKCU Run value and an installer shortcut both mean "start with
+        # Windows", so the dialog reflects what Windows will actually do rather
+        # than what IDM last remembered asking for.
+        try:
+            self._settings.start_with_windows = startup.is_enabled()
+        except Exception:
+            logger.debug("Could not read the start-up registration", exc_info=True)
+        was_enabled = self._settings.start_with_windows
+
         dialog = OptionsDialog(
-            self._settings, self._theme, self, initial_tab=initial_tab
+            self._settings,
+            self._theme,
+            self,
+            initial_tab=initial_tab,
+            capacity_reader=lambda: self._manager.capacity_kbps,
+            measure_request=self._manager.measure_capacity,
         )
         try:
             if dialog.exec() != OptionsDialog.DialogCode.Accepted:
@@ -1037,6 +1160,9 @@ class MainWindow(QMainWindow):
 
         self._settings.update(values)
         self._settings.save()
+        if bool(values["start_with_windows"]) != was_enabled:
+            self._apply_startup_choice(values["start_with_windows"])
+        self._apply_tray_settings()
         self._manager.apply_settings()
         self._theme.set_mode(self._settings.theme)
         self._apply_view_settings()
@@ -1059,13 +1185,17 @@ class MainWindow(QMainWindow):
         self._raise_for_browser()
         self._open_options(initial_tab=2)
 
-    # ------------------------------------------------------------------ browser integration
-    def _raise_for_browser(self) -> None:
+    # ------------------------------------------------------------------ window focus
+    def _raise_window(self) -> None:
         if self.isMinimized():
             self.showNormal()
         self.show()
         self.raise_()
         self.activateWindow()
+
+    # ------------------------------------------------------------------ browser integration
+    def _raise_for_browser(self) -> None:
+        self._raise_window()
 
     def _prompt_browser_folder(
         self, filename: str, default_folder: str, browser: str
@@ -1088,6 +1218,16 @@ class MainWindow(QMainWindow):
             QMessageBox.StandardButton.Yes,
         )
         return answer == QMessageBox.StandardButton.Yes
+
+    def _prompt_browser_capture(self, payload: dict) -> list[dict] | None:
+        """Show the captured links and return the ones the user agreed to."""
+        self._raise_for_browser()
+        dialog = PageLinksDialog(payload, self._theme, self)
+        selected = None
+        if dialog.exec() == PageLinksDialog.DialogCode.Accepted:
+            selected = dialog.selected()
+        dialog.deleteLater()
+        return selected
 
     def _prompt_browser_download(self, request: dict, submit):
         self._raise_for_browser()
@@ -1992,10 +2132,14 @@ class MainWindow(QMainWindow):
         )
         self._refresh_connection_status(speed)
         self._refresh_page_state()
+        self._refresh_tray_state()
 
     def _on_download_completed(self, item: DownloadItem) -> None:
         self._status_bar.show_message(
             f"Download complete — {_shorten(item.filename, 56)}"
+        )
+        self._notify_from_tray(
+            "Download complete", f"{_shorten(item.filename, 60)} finished."
         )
         if not self._settings.show_completion_dialog:
             return
@@ -2017,6 +2161,12 @@ class MainWindow(QMainWindow):
         self._status_bar.show_message(
             f"Download failed — {_shorten(item.filename, 40)}. "
             "Double-click for details."
+        )
+        self._notify_from_tray(
+            "Download failed",
+            f"{_shorten(item.filename, 60)} — "
+            f"{_shorten(item.error or 'the transfer could not finish', 70)}",
+            error=True,
         )
 
     # ------------------------------------------------------------------ theme
@@ -2075,6 +2225,12 @@ class MainWindow(QMainWindow):
 
         menu.addSeparator()
         if len(items) == 1:
+            open_action = menu.addAction(
+                icons.icon("play", p.text_muted, 16), "Open"
+            )
+            open_action.setEnabled(item.path.is_file())
+            open_action.triggered.connect(lambda: self._open_file(item))
+
             folder_action = menu.addAction(
                 icons.icon("folder_open", p.text_muted, 16),
                 "Open containing folder",
@@ -2088,9 +2244,35 @@ class MainWindow(QMainWindow):
             )
             copy_action.triggered.connect(lambda: self._copy_link(item))
 
+            rename_action = menu.addAction(
+                icons.icon("file_text", p.text_muted, 16), "Rename…"
+            )
+            rename_action.setEnabled(not item.is_active)
+            rename_action.triggered.connect(lambda: self._rename_item(item))
+
+            if item.status in {
+                DownloadStatus.FAILED,
+                DownloadStatus.STOPPED,
+                DownloadStatus.PAUSED,
+            }:
+                refresh_action = menu.addAction(
+                    icons.icon("link", p.text_muted, 16), "Refresh download link"
+                )
+                refresh_action.triggered.connect(lambda: self._refresh_link(item))
+
+            if item.status == DownloadStatus.COMPLETED:
+                verify_action = menu.addAction(
+                    icons.icon("shield", p.text_muted, 16), "Verify checksum"
+                )
+                verify_action.triggered.connect(lambda: self._verify_checksum(item))
+
             if item.status == DownloadStatus.FAILED:
                 error_action = menu.addAction("Show error details")
                 error_action.triggered.connect(lambda: self._show_error(item))
+            properties_action = menu.addAction(
+                icons.icon("info", p.text_muted, 16), "Properties…"
+            )
+            properties_action.triggered.connect(lambda: self._show_properties(item))
             menu.addSeparator()
 
         remove_action = menu.addAction(
@@ -2107,6 +2289,67 @@ class MainWindow(QMainWindow):
             return
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder)))
 
+    def _open_file(self, item: DownloadItem) -> None:
+        """Hand one finished file to the shell, but never a program silently."""
+        path = Path(item.path)
+        if not path.is_file():
+            self._status_bar.show_message(
+                "The downloaded file is no longer at its saved location."
+            )
+            return
+        if path.suffix.lower() in _EXECUTABLE_SUFFIXES:
+            answer = QMessageBox.question(
+                self,
+                "Open executable file",
+                f"{path.name} is a program. Windows will run it with your "
+                "normal user rights.\n\nOpen it anyway?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                self._status_bar.show_message("Open cancelled.")
+                return
+        if not QDesktopServices.openUrl(QUrl.fromLocalFile(str(path))):
+            self._status_bar.show_message(
+                "Windows has no registered app that can open this file type."
+            )
+
+    def _open_selected_file(self) -> None:
+        items = self._selected_items()
+        if len(items) == 1:
+            self._open_file(items[0])
+
+    def _open_selected_folder(self) -> None:
+        items = self._selected_items()
+        if len(items) == 1:
+            self._open_containing_folder(items[0])
+
+    def _show_properties(self, item: DownloadItem) -> None:
+        dialog = DownloadPropertiesDialog(item, self._theme, self)
+        dialog.open_file_requested.connect(
+            lambda download_id: self._with_item(download_id, self._open_file)
+        )
+        dialog.open_folder_requested.connect(
+            lambda download_id: self._with_item(
+                download_id, self._open_containing_folder
+            )
+        )
+        dialog.copy_link_requested.connect(
+            lambda download_id: self._with_item(download_id, self._copy_link)
+        )
+        dialog.exec()
+        dialog.deleteLater()
+
+    def _show_selected_properties(self) -> None:
+        items = self._selected_items()
+        if len(items) == 1:
+            self._show_properties(items[0])
+
+    def _with_item(self, download_id: str, action) -> None:
+        item = self._manager.get(download_id)
+        if item is not None:
+            action(item)
+
     def _copy_link(self, item: DownloadItem) -> None:
         QGuiApplication.clipboard().setText(item.url)
         self._status_bar.show_message("Download link copied to the clipboard.")
@@ -2118,6 +2361,125 @@ class MainWindow(QMainWindow):
             item.error or "No further details are available for this download.",
         )
 
+    # ------------------------------------------------------------------ file tools
+    def _add_batch_downloads(self) -> None:
+        dialog = BatchUrlsDialog(self._settings, self._theme, self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        values = dialog.values()
+        folder = values["folder"] or self._settings.download_dir
+        existing = {
+            (item.url, item.folder.casefold(), item.filename.casefold())
+            for item in self._manager.items()
+        }
+        added = skipped = rejected = 0
+        for url in values["urls"]:
+            filename = guess_filename(url)
+            key = (url, folder.casefold(), filename.casefold())
+            if key in existing:
+                skipped += 1
+                continue
+            try:
+                self._manager.add_download(
+                    url=url,
+                    filename=filename,
+                    folder=folder,
+                    start_immediately=values["start_immediately"],
+                )
+            except (ValueError, OSError):
+                rejected += 1
+                continue
+            existing.add(key)
+            added += 1
+
+        parts = [f"{added} download{'s' if added != 1 else ''} added"]
+        if skipped:
+            parts.append(f"{skipped} already in the list")
+        if rejected:
+            parts.append(f"{rejected} link{'s' if rejected != 1 else ''} rejected")
+        self._status_bar.show_message(", ".join(parts) + ".")
+
+    def _rename_selected(self) -> None:
+        items = self._selected_items()
+        if len(items) == 1:
+            self._rename_item(items[0])
+
+    def _rename_item(self, item: DownloadItem) -> None:
+        name, accepted = QInputDialog.getText(
+            self, "Rename download", "File name:", QLineEdit.Normal, item.filename
+        )
+        if not accepted or name == item.filename:
+            return
+        error = self._manager.rename(item.id, name)
+        if error:
+            QMessageBox.warning(self, "Could not rename", error)
+        else:
+            self._status_bar.show_message(f"Renamed to {item.filename}.")
+
+    def _refresh_selected_link(self) -> None:
+        items = self._selected_items()
+        if len(items) == 1:
+            self._refresh_link(items[0])
+
+    def _refresh_link(self, item: DownloadItem) -> None:
+        if self._link_probe is not None:
+            self._status_bar.show_message("A link check is already running.")
+            return
+        probe = LinkProbe(settings=self._settings, parent=self)
+        self._link_probe = probe
+        probe.finished.connect(lambda result: self._on_link_refreshed(item.id, result))
+        probe.failed.connect(self._on_link_probe_failed)
+        self._status_bar.show_message("Checking the link…")
+        probe.start(item.url)
+
+    def _on_link_refreshed(self, download_id: str, result) -> None:
+        probe, self._link_probe = self._link_probe, None
+        if probe is not None:
+            probe.abort()
+            probe.deleteLater()
+        item = self._manager.get(download_id)
+        if item is None:
+            return
+        error = self._manager.refresh_link(download_id, result.final_url or item.url)
+        if error:
+            QMessageBox.warning(self, "Could not refresh the link", error)
+            return
+        self._status_bar.show_message("Link refreshed and the download was queued.")
+
+    def _on_link_probe_failed(self, message: str) -> None:
+        probe, self._link_probe = self._link_probe, None
+        if probe is not None:
+            probe.deleteLater()
+        self._status_bar.show_message(message or "The link could not be inspected.")
+
+    def _verify_selected_checksum(self) -> None:
+        items = self._selected_items()
+        if len(items) == 1:
+            self._verify_checksum(items[0])
+
+    def _verify_checksum(self, item: DownloadItem) -> None:
+        error = self._manager.verify_checksum(item.id)
+        if error:
+            QMessageBox.warning(self, "Could not verify", error)
+        else:
+            self._status_bar.show_message("Calculating the SHA-256 checksum…")
+
+    def _on_checksum_checked(
+        self, item: DownloadItem, digest: str, status: str
+    ) -> None:
+        if status.startswith("error:"):
+            self._status_bar.show_message("The file could not be read.")
+        elif status == "verified":
+            self._status_bar.show_message(
+                "Checksum verified: the file matches the expected SHA-256."
+            )
+        elif status == "mismatch":
+            self._status_bar.show_message(
+                "Checksum mismatch: the file does not match the expected SHA-256."
+            )
+        else:
+            self._status_bar.show_message(f"SHA-256 {digest[:16]}…  ({digest})")
+
     def _on_double_click(self, index: QModelIndex) -> None:
         item = self._item_from_index(index)
         if item is None:
@@ -2126,6 +2488,104 @@ class MainWindow(QMainWindow):
             self._open_containing_folder(item)
         else:
             self._show_progress(item)
+
+    # ------------------------------------------------------------------ tray
+    def _build_tray(self) -> None:
+        """Show the notification-area icon when the user asked for one."""
+        if not self._settings.tray_enabled or self._tray is not None:
+            return
+        candidate = TrayController(self)
+        if not candidate.available:
+            candidate.destroy()
+            self._status_bar.show_message(
+                "Windows has no notification area available, so IDM stays "
+                "window-only."
+            )
+            return
+        candidate.open_requested.connect(self._show_from_tray)
+        candidate.pause_all_requested.connect(self._pause_all)
+        candidate.resume_all_requested.connect(self._resume_all)
+        candidate.quit_requested.connect(self._quit_application)
+        self._tray = candidate
+        app = QApplication.instance()
+        if app is not None:
+            # Hiding the only window must not end the session while the tray
+            # is the way back into IDM.
+            app.setQuitOnLastWindowClosed(False)
+        self._refresh_tray_state()
+
+    def _apply_tray_settings(self) -> None:
+        """React to a tray option change without restarting IDM."""
+        if self._settings.tray_enabled:
+            self._build_tray()
+            if self._tray is not None:
+                self._tray.set_enabled(True)
+            return
+        if self._tray is None:
+            return
+        self._tray.destroy()
+        self._tray = None
+        app = QApplication.instance()
+        if app is not None:
+            app.setQuitOnLastWindowClosed(True)
+
+    def _apply_startup_choice(self, enabled: bool) -> None:
+        """Register or unregister IDM for the current Windows user."""
+
+        def report(message: str) -> None:
+            logger.warning("%s", message)
+            self._status_bar.show_message(message)
+
+        applied = startup.set_enabled(bool(enabled), on_error=report)
+        self._settings.start_with_windows = applied
+        self._settings.save()
+        if applied == bool(enabled):
+            self._status_bar.show_message(
+                "IDM will start when you sign in to Windows."
+                if applied
+                else "IDM no longer starts with Windows."
+            )
+
+    def _refresh_tray_state(self) -> None:
+        """Mirror what IDM is doing in the icon tooltip and its menu."""
+        if self._tray is None:
+            return
+        items = self._manager.items()
+        active = sum(1 for item in items if item.is_active)
+        resumable = sum(1 for item in items if item.status in _RESUMABLE_ALL)
+        queued = sum(1 for item in items if item.status == DownloadStatus.QUEUED)
+        if active:
+            summary = (
+                f"{active} download{'s' if active != 1 else ''} in progress - "
+                f"{format_speed(self._manager.total_speed)}"
+            )
+        elif queued:
+            summary = f"{queued} download{'s' if queued != 1 else ''} waiting in queue"
+        elif resumable:
+            summary = f"{resumable} download{'s' if resumable != 1 else ''} paused"
+        else:
+            summary = "No downloads in progress"
+        self._tray.set_summary(summary)
+        self._tray.set_transfer_actions_enabled(
+            any(item.can_pause for item in items),
+            any(item.can_resume for item in items),
+        )
+
+    def _notify_from_tray(
+        self, title: str, message: str, error: bool = False
+    ) -> bool:
+        """Publish a Windows notice; a hidden or absent tray is not an error."""
+        if self._tray is None or not self._settings.native_notifications:
+            return False
+        return self._tray.notify(title, message, error)
+
+    def _show_from_tray(self) -> None:
+        self._raise_window()
+
+    def _quit_application(self) -> None:
+        """Close IDM for real, bypassing the hide-to-tray behaviour."""
+        self._quitting = True
+        self.close()
 
     # ------------------------------------------------------------------ lifecycle
     def _save_geometry(self) -> None:
@@ -2138,6 +2598,28 @@ class MainWindow(QMainWindow):
             logger.debug("Could not save window geometry", exc_info=True)
 
     def closeEvent(self, event) -> None:
+        if self._shutdown_done:
+            # A window torn down after the session ended must not write
+            # settings or stop transfers a second time.
+            event.accept()
+            return
+
+        if (
+            self._tray is not None
+            and self._settings.tray_on_close
+            and not self._quitting
+        ):
+            event.ignore()
+            self.hide()
+            if not self._tray_hint_shown:
+                self._tray_hint_shown = True
+                self._tray.notify(
+                    "IDM is still running",
+                    "Transfers continue in the background. Double-click the "
+                    "tray icon to return, or use Quit IDM to close.",
+                )
+            return
+
         active = self._manager.active_count
         if active:
             message = QMessageBox(self)
@@ -2166,6 +2648,8 @@ class MainWindow(QMainWindow):
         if self._shutdown_done:
             return
         self._shutdown_done = True
+        if self._tray is not None:
+            self._tray.hide()
         for dialog in list(self._progress_dialogs.values()):
             try:
                 dialog.close()

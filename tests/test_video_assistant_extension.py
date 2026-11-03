@@ -153,6 +153,36 @@ def test_detector_and_native_request_harness() -> None:
     assert "video assistant harness passed" in result.stdout
 
 
+def test_page_capture_is_wired_through_every_layer() -> None:
+    """Popup button -> background route -> content handler -> native request."""
+    detector = (EXTENSION / "media-detector.js").read_text(encoding="utf-8")
+    native = (EXTENSION / "native-messaging.js").read_text(encoding="utf-8")
+    content = (EXTENSION / "content.js").read_text(encoding="utf-8")
+    background = (EXTENSION / "background.js").read_text(encoding="utf-8")
+    popup = (EXTENSION / "popup.js").read_text(encoding="utf-8")
+    html = (EXTENSION / "popup.html").read_text(encoding="utf-8")
+
+    assert 'id="capture-links"' in html
+    assert 'getElementById("capture-links")' in popup
+    assert '"idm:capturePage"' in popup
+    assert 'type === "idm:capturePage"' in background
+    assert '"idm:collectLinks"' in background
+    assert 'message.type === "idm:collectLinks"' in content
+    assert "function buildCaptureRequest" in native
+    assert '"capture_page_links"' in native
+    assert "function collectLinks" in detector
+
+    # The extension must never offer more links than the native host accepts.
+    from integrations.protocol import MAX_CAPTURE_LINKS
+
+    assert re.search(r"MAX_CAPTURE_LINKS = (\d+)", native).group(1) == str(
+        MAX_CAPTURE_LINKS
+    )
+    assert re.search(r"MAX_CAPTURE_LINKS = (\d+)", detector).group(1) == str(
+        MAX_CAPTURE_LINKS
+    )
+
+
 def test_youtube_official_options_are_wired_into_the_popup() -> None:
     detector = (EXTENSION / "media-detector.js").read_text(encoding="utf-8")
     popup = (EXTENSION / "popup.js").read_text(encoding="utf-8")

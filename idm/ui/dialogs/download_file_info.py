@@ -53,6 +53,7 @@ from ...core.categories import (
     ensure_filename_extension,
     safe_category,
 )
+from ...core.media import normalize_sha256
 from ...core.media_policy import restricted_platform, restriction_message
 from ...core.probe import LinkProbe, ProbeResult
 from ...core.settings import AppSettings
@@ -627,6 +628,26 @@ class AddDownloadDialog(BaseDialog):
         self.description_edit.setTabChangesFocus(True)
         description_field.addWidget(self.description_edit)
         layout.addLayout(description_field)
+
+        checksum_field = QVBoxLayout()
+        checksum_field.setSpacing(design.SPACING["xs"])
+        checksum_field.addWidget(make_label("EXPECTED SHA-256 (OPTIONAL)"))
+        self.checksum_edit = QLineEdit()
+        self.checksum_edit.setObjectName("ChecksumInput")
+        self.checksum_edit.setMinimumHeight(40)
+        self.checksum_edit.setPlaceholderText("64 hexadecimal characters")
+        self.checksum_edit.setMaxLength(80)
+        self.checksum_edit.setToolTip(
+            "The digest published by the site.  The finished file is compared "
+            "with it and discarded when it does not match."
+        )
+        checksum_field.addWidget(self.checksum_edit)
+        checksum_hint = QLabel()
+        checksum_hint.setObjectName("HintLabel")
+        checksum_hint.setText("Leave empty to skip integrity verification.")
+        checksum_hint.setWordWrap(True)
+        checksum_field.addWidget(checksum_hint)
+        layout.addLayout(checksum_field)
         return card
 
     def _build_information(self) -> QWidget:
@@ -1310,6 +1331,13 @@ class AddDownloadDialog(BaseDialog):
             return
 
         category = self._current_category()
+        expected_sha256 = normalize_sha256(self.checksum_edit.text())
+        if self.checksum_edit.text().strip() and not expected_sha256:
+            self._show_error(
+                "Enter the expected SHA-256 as 64 hexadecimal characters."
+            )
+            self.checksum_edit.setFocus()
+            return
         description = self.description_edit.toPlainText().strip()
         if len(description) > _MAX_DESCRIPTION:
             self._show_error(
@@ -1327,6 +1355,7 @@ class AddDownloadDialog(BaseDialog):
             "start_immediately": bool(start_immediately),
             "download_later": not start_immediately,
             "description": description,
+            "expected_sha256": expected_sha256,
         }
 
         if self.remember_check.isChecked():

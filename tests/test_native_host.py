@@ -210,6 +210,105 @@ def test_firefox_extension_is_allowed_when_configured() -> None:
     assert response["browser"] == "firefox"
 
 
+@pytest.mark.parametrize("browser", ["brave", "opera"])
+def test_chromium_family_browsers_are_recognised(browser) -> None:
+    """Brave and Opera derive the same unpacked extension ID as Chrome."""
+    bridge = FakeBridge(
+        response={"ok": True, "type": "status", "status": {"idm_running": True}}
+    )
+    handler = NativeHostMessageHandler(
+        client=bridge, environ={}, detected_browser=browser
+    )
+    response = handler.handle(_message(browser=browser))
+    assert response["ok"] is True, response
+    assert response["browser"] == browser
+    assert response["detected_browser"] == browser
+
+
+@pytest.mark.parametrize("browser", ["brave", "opera"])
+def test_a_supported_browser_claimed_by_another_process_is_rejected(browser) -> None:
+    bridge = FakeBridge(response={"ok": True})
+    handler = NativeHostMessageHandler(
+        client=bridge, environ={}, detected_browser="chrome"
+    )
+    response = handler.handle(_message(browser=browser))
+    assert response["ok"] is False
+    assert response["error"]["code"] == "browser_mismatch"
+    assert bridge.calls == []
+
+
+def test_page_capture_is_forwarded_and_deduplicated() -> None:
+    captured = {
+        "ok": True,
+        "type": "page_captured",
+        "requested": 2,
+        "added": 2,
+        "skipped": 0,
+        "rejected": 0,
+    }
+    bridge = FakeBridge(response=captured)
+    handler = NativeHostMessageHandler(
+        client=bridge, environ={}, detected_browser="chrome"
+    )
+    request = _message(
+        type="capture_page_links",
+        page_url="https://example.com/index.html",
+        page_title="Index",
+        links=[
+            {"url": "https://example.com/a.zip", "filename": "a.zip"},
+            {"url": "mailto:someone@example.com"},
+            {"url": "https://example.com/b.pdf"},
+        ],
+    )
+    first = handler.handle(request)
+    second = handler.handle(request)
+
+    assert first == second
+    assert len(bridge.calls) == 1, "a resent capture must not double the queue"
+    payload, timeout = bridge.calls[0]
+    assert payload["type"] == "capture_page_links"
+    assert [link["url"] for link in payload["links"]] == [
+        "https://example.com/a.zip",
+        "https://example.com/b.pdf",
+    ]
+    assert payload["page_title"] == "Index"
+    assert payload["page_url"] == "https://example.com/index.html"
+    assert 0 < timeout <= 900
+
+
+def test_capture_without_idm_is_retryable() -> None:
+    bridge = FakeBridge(error=BridgeUnavailable("IDM is not reachable."))
+    handler = NativeHostMessageHandler(
+        client=bridge, environ={}, detected_browser="chrome"
+    )
+    response = handler.handle(
+        _message(
+            type="capture_page_links",
+            links=[{"url": "https://example.com/a.zip"}],
+        )
+    )
+    assert response["ok"] is False
+    assert response["error"]["code"] == "idm_not_running"
+    assert response["error"]["retryable"] is True
+
+
+def test_capture_of_only_unusable_links_is_refused() -> None:
+    bridge = FakeBridge(response={"ok": True, "type": "page_captured"})
+    handler = NativeHostMessageHandler(
+        client=bridge, environ={}, detected_browser="chrome"
+    )
+    response = handler.handle(
+        _message(
+            type="capture_page_links",
+            links=[{"url": "javascript:alert(1)"}, {"url": "https://example.com/a.zip"}],
+        )
+    )
+    assert response["ok"] is True
+    assert bridge.calls[0][0]["links"] == [
+        {"url": "https://example.com/a.zip", "filename": ""}
+    ]
+
+
 def test_open_and_list_requests_are_forwarded() -> None:
     bridge = FakeBridge(response={"ok": True, "type": "opened"})
     handler = NativeHostMessageHandler(

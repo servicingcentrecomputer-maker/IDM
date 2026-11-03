@@ -13,18 +13,31 @@ hard timeout and is cancelled when the dialog closes.
 
 from __future__ import annotations
 
+import ftplib
+import logging
+import mimetypes
+import socket
+import ssl
+import threading
 from dataclasses import dataclass
+from datetime import datetime
+from urllib.parse import unquote, urlparse
 
 from PySide6.QtCore import QObject, QTimer, QUrl, Signal
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
 
 from ..constants import APP_USER_AGENT
+from .network import connect_timeout as profile_connect_timeout
+from .network import site_auth_for
 from .url_utils import (
     InvalidUrlError,
     filename_from_content_disposition,
+    guess_filename,
     parse_content_range_total,
     validate_url,
 )
+
+logger = logging.getLogger(__name__)
 
 _OVERALL_TIMEOUT_MS = 20_000
 _PER_REQUEST_TIMEOUT_MS = 9_000
@@ -62,12 +75,19 @@ class ProbeResult:
         return f"HTTP {self.status_code} {reason}".strip()
 
 
+class _FtpProbeCancelled(Exception):
+    """Raised inside the FTP probe thread when the dialog moves on."""
+
+
 class LinkProbe(QObject):
     finished = Signal(object)
     failed = Signal(str)
+    _ftp_result = Signal(object, int)
+    _ftp_error = Signal(str, int)
 
-    def __init__(self, parent: QObject | None = None) -> None:
+    def __init__(self, parent: QObject | None = None, settings=None) -> None:
         super().__init__(parent)
+        self._settings = settings
         self._manager = QNetworkAccessManager(self)
         self._reply: QNetworkReply | None = None
         self._request_url = ""
@@ -76,6 +96,12 @@ class LinkProbe(QObject):
         self._get_captured = False
         self._get_error_status: int | None = None
         self._last_error = ""
+        self._ftp_cancel = threading.Event()
+        self._ftp_thread: threading.Thread | None = None
+        self._ftp_done = False
+        self._ftp_token = 0
+        self._ftp_result.connect(self._on_ftp_result)
+        self._ftp_error.connect(self._on_ftp_error)
 
         self._timeout = QTimer(self)
         self._timeout.setSingleShot(True)
@@ -97,10 +123,18 @@ class LinkProbe(QObject):
         self._get_error_status = None
         self._last_error = ""
         self._timeout.start()
+        if urlparse(normalized).scheme.lower() in {"ftp", "ftps"}:
+            self._phase = "ftp"
+            self._ftp_done = False
+            self._start_ftp(normalized)
+            return
         self._start_head()
 
     def abort(self) -> None:
         self._timeout.stop()
+        self._ftp_token += 1
+        self._ftp_done = True
+        self._ftp_cancel.set()
         reply = self._reply
         self._reply = None
         self._phase = ""
@@ -237,17 +271,150 @@ class LinkProbe(QObject):
             return
         self._fail(_friendly_error(error, self._last_error or reply.errorString()))
 
+    # ------------------------------------------------------------------ FTP
+    def _start_ftp(self, url: str) -> None:
+        self._ftp_cancel.clear()
+        token = self._ftp_token
+        thread = threading.Thread(
+            target=self._probe_ftp,
+            args=(url, token),
+            name="idm-ftp-probe",
+            daemon=True,
+        )
+        self._ftp_thread = thread
+        thread.start()
+
+    def _probe_ftp(self, url: str, token: int) -> None:
+        try:
+            result = self._inspect_ftp(url, token)
+        except _FtpProbeCancelled:
+            return
+        except Exception as exc:  # network and protocol errors both land here
+            logger.debug("FTP probe failed", exc_info=True)
+            if token == self._ftp_token and not self._ftp_cancel.is_set():
+                self._ftp_error.emit(_ftp_error_message(exc), token)
+            return
+        if token == self._ftp_token and not self._ftp_cancel.is_set():
+            self._ftp_result.emit(result, token)
+
+    def _on_ftp_result(self, result: ProbeResult, token: int) -> None:
+        if token != self._ftp_token or self._phase != "ftp":
+            return
+        self._complete(result)
+
+    def _on_ftp_error(self, message: str, token: int) -> None:
+        if token != self._ftp_token or self._phase != "ftp":
+            return
+        self._fail(message)
+
+    def _check_ftp_cancelled(self, token: int) -> None:
+        if token != self._ftp_token or self._ftp_cancel.is_set():
+            raise _FtpProbeCancelled
+
+    def _inspect_ftp(self, url: str, token: int) -> ProbeResult:
+        parsed = urlparse(url)
+        scheme = parsed.scheme.lower()
+        host = parsed.hostname or ""
+        default_port = 990 if scheme == "ftps" else 21
+        try:
+            port = parsed.port or default_port
+        except ValueError as exc:
+            raise InvalidUrlError("The link contains an invalid port.") from exc
+
+        username = unquote(parsed.username or "") or "anonymous"
+        password = unquote(parsed.password or "") or "anonymous@"
+        auth = site_auth_for(self._settings, url) if self._settings is not None else None
+        if auth is not None:
+            username, password = auth[0], auth[1]
+
+        path = unquote(parsed.path or "")
+        if not path:
+            path = "/"
+        if path.endswith("/"):
+            raise InvalidUrlError("The FTP address points to a folder, not a file.")
+        if not path.startswith("/"):
+            path = f"/{path}"
+
+        timeout = (
+            profile_connect_timeout(self._settings)
+            if self._settings is not None
+            else 15.0
+        )
+        client = None
+        try:
+            if scheme == "ftps":
+                client = ftplib.FTP_TLS(timeout=timeout)
+                client.connect(host, port, timeout=timeout)
+                client.login(username, password)
+                client.prot_p()
+            else:
+                client = ftplib.FTP(timeout=timeout)
+                client.connect(host, port, timeout=timeout)
+                client.login(username, password)
+            self._check_ftp_cancelled(token)
+            client.voidcmd("TYPE I")
+
+            total: int | None = None
+            try:
+                total = client.size(path)
+            except ftplib.error_perm as exc:
+                if _is_missing_reply(str(exc)):
+                    raise
+                total = None
+            except ftplib.all_errors:
+                total = None
+            self._check_ftp_cancelled(token)
+
+            last_modified = ""
+            try:
+                response = client.sendcmd(f"MDTM {path}")
+                value = response[4:].strip()
+                last_modified = datetime.strptime(value, "%Y%m%d%H%M%S").strftime(
+                    "%Y-%m-%d %H:%M:%S"
+                )
+            except ftplib.error_perm as exc:
+                if total is None and _is_missing_reply(str(exc)):
+                    raise
+            except (*ftplib.all_errors, ValueError):
+                last_modified = ""
+            self._check_ftp_cancelled(token)
+        finally:
+            if client is not None:
+                try:
+                    client.quit()
+                except Exception:  # pragma: no cover - best-effort cleanup
+                    try:
+                        client.close()
+                    except Exception:
+                        pass
+
+        filename = guess_filename(url, fallback="download")
+        content_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
+        return ProbeResult(
+            final_url=url,
+            filename=filename,
+            total_bytes=total if total is not None and total >= 0 else None,
+            content_type=content_type,
+            range_supported=True,
+            requested_url=url,
+            status_code=None,
+            last_modified=last_modified,
+            method="FTP" if scheme == "ftp" else "FTPS",
+        )
+
     # ------------------------------------------------------------------ results
     def _complete(self, result: ProbeResult) -> None:
         self._timeout.stop()
         self._phase = ""
         self._head_result = None
+        self._ftp_done = True
         self.finished.emit(result)
 
     def _fail(self, message: str) -> None:
         self._timeout.stop()
         self._phase = ""
         self._head_result = None
+        self._ftp_done = True
         self.failed.emit(message or "The link could not be inspected.")
 
     def _on_timeout(self) -> None:
@@ -352,6 +519,35 @@ _HTTP_REASONS = {
 def _http_message(status: int) -> str:
     reason = _HTTP_REASONS.get(status, "HTTP error")
     return f"The server responded with HTTP {status} ({reason})."
+
+
+def _is_missing_reply(text: str) -> bool:
+    """True for the FTP replies that mean "this file could not be opened"."""
+    return text.startswith(("450", "550"))
+
+
+def _ftp_error_message(exc: Exception) -> str:
+    """Turn an ftplib/socket failure into the text the dialog shows."""
+    if isinstance(exc, InvalidUrlError):
+        return str(exc)
+    text = str(exc)
+    if text.startswith("530"):
+        return "The FTP server rejected the user name or password."
+    if _is_missing_reply(text):
+        return "The file was not found or access was denied on the FTP server."
+    if text.startswith("421"):
+        return "The FTP server is busy. Try again later."
+    if isinstance(exc, TimeoutError):
+        return "The FTP server took too long to respond."
+    if isinstance(exc, ssl.SSLCertVerificationError):
+        return "The FTPS server certificate could not be verified."
+    if isinstance(exc, ssl.SSLError):
+        return "TLS verification failed for this FTPS server."
+    if isinstance(exc, ConnectionRefusedError):
+        return "The FTP server refused the connection."
+    if isinstance(exc, socket.gaierror):
+        return "Could not find that server."
+    return "Could not inspect the FTP link."
 
 
 def _friendly_error(error: QNetworkReply.NetworkError, fallback: str) -> str:

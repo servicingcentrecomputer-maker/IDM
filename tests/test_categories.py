@@ -175,3 +175,40 @@ def test_remembered_folder_normalisation_drops_unknown_categories() -> None:
     )
     assert paths == {"Documents": r"C:\Downloads\Docs"}
     assert normalize_category_paths("not-a-mapping") == {}
+
+
+def test_restored_records_without_a_category_use_the_general_bucket() -> None:
+    from idm.engine.manager import _item_from_record
+
+    item = _item_from_record(
+        {
+            "url": "https://example.com/mystery",
+            "filename": "mystery",
+            "folder": "C:/Downloads",
+        }
+    )
+    assert item is not None
+    assert item.category == CATEGORY_GENERAL
+
+
+def test_every_builtin_category_has_a_navigation_entry() -> None:
+    from idm.constants import CATEGORY_FILTER_KEYS
+    from idm.ui.sidebar import _LIBRARY_ITEMS
+
+    assert {key for key, _title, _icon in _LIBRARY_ITEMS} == set(CATEGORY_FILTER_KEYS)
+
+
+def test_detection_and_restoration_agree_on_the_fallback_bucket() -> None:
+    from idm.engine.manager import _item_from_record
+
+    detected = detect_category("mystery")
+    restored = _item_from_record(
+        {
+            "url": "https://example.com/mystery",
+            "filename": "mystery",
+            "folder": "C:/Downloads",
+            "category": "",
+        }
+    )
+    assert restored is not None
+    assert restored.category == detected

@@ -25,6 +25,7 @@ from .protocol import (
     ValidationError,
     decode_line,
     encode_line,
+    normalize_capture_request,
     normalize_download_request,
     require_browser,
     require_extension_id,
@@ -40,6 +41,10 @@ STATUS_TIMEOUT = 8.0
 # The desktop may show the Download File Info dialog before answering.  Keep
 # the native host waiting long enough for a person to review and edit the task.
 DOWNLOAD_TIMEOUT = 900.0
+# A page capture waits for the same kind of review dialog, but the request is
+# only a list of links, so it should not hold a browser for as long as a
+# single interactive download can.
+CAPTURE_TIMEOUT = 300.0
 
 
 class BridgeUnavailable(RuntimeError):
@@ -174,6 +179,8 @@ class NativeHostMessageHandler:
                 return self._status(request_id, browser, extension_id)
             if message_type == "request_download":
                 return self._download(message, request_id)
+            if message_type == "capture_page_links":
+                return self._capture(message, request_id)
             if message_type in {"open_idm", "open_settings"}:
                 require_request_id(message)
                 return self._forward(request_id, message_type, message)
@@ -266,6 +273,27 @@ class NativeHostMessageHandler:
             )
         decorated = _decorate(response)
         if response.get("ok") and response.get("type") == "download_accepted":
+            self._dedupe.put(request_id, decorated, now)
+        return decorated
+
+    def _capture(
+        self, message: dict[str, Any], request_id: str | None
+    ) -> dict[str, Any]:
+        normalized = normalize_capture_request(message)
+        request_id = normalized["request_id"]
+        now = time.monotonic()
+        cached = self._dedupe.get(request_id, now)
+        if cached is not None:
+            return cached
+
+        try:
+            response = self._client.request(normalized, CAPTURE_TIMEOUT)
+        except BridgeUnavailable as exc:
+            return response_error(
+                request_id, "idm_not_running", str(exc), retryable=True
+            )
+        decorated = _decorate(response)
+        if response.get("ok") and response.get("type") == "page_captured":
             self._dedupe.put(request_id, decorated, now)
         return decorated
 

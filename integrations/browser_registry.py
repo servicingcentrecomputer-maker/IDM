@@ -1,11 +1,11 @@
 """Extension allowlisting and native messaging manifest generation.
 
-Chrome and Edge identify an extension by the origin derived from its public
-key (or the ID assigned by the store).  Firefox uses the stable Gecko ID from
-``browser_specific_settings.gecko.id``.  The build embeds development keys so
-an unpacked extension keeps the same ID across reloads; production store IDs
-can be supplied with the ``IDM_*_EXTENSION_ID`` environment variables or the
-registration script's command line.
+Chrome, Edge, Brave and Opera identify an extension by the origin derived from
+its public key (or the ID assigned by the store).  Firefox uses the stable
+Gecko ID from ``browser_specific_settings.gecko.id``.  The build embeds
+development keys so an unpacked extension keeps the same ID across reloads;
+production store IDs can be supplied with the ``IDM_*_EXTENSION_ID`` environment
+variables or the registration script's command line.
 
 The native host repeats this allowlist check after reading a message.  Registry
 based registration alone is not treated as sufficient authorisation.
@@ -34,18 +34,32 @@ CHROME_EXTENSION_ID = "ljckgbgnolmopacdgmmgaijleadcmpgn"
 EDGE_EXTENSION_KEY = CHROME_EXTENSION_KEY
 EDGE_EXTENSION_ID = CHROME_EXTENSION_ID
 
+# Brave and Opera are Chromium browsers: the same public key derives the same
+# unpacked-extension ID.  Store-assigned IDs can still differ, so each browser
+# keeps its own constant and its own environment override.
+BRAVE_EXTENSION_KEY = CHROME_EXTENSION_KEY
+BRAVE_EXTENSION_ID = CHROME_EXTENSION_ID
+OPERA_EXTENSION_KEY = CHROME_EXTENSION_KEY
+OPERA_EXTENSION_ID = CHROME_EXTENSION_ID
+
 FIREFOX_EXTENSION_ID = "idm-browser-integration@idm.local"
+
+_CHROMIUM_BROWSERS = ("chrome", "edge", "brave", "opera")
 
 _ENV_KEYS = {
     "chrome": "IDM_CHROME_EXTENSION_ID",
     "edge": "IDM_EDGE_EXTENSION_ID",
     "firefox": "IDM_FIREFOX_EXTENSION_ID",
+    "brave": "IDM_BRAVE_EXTENSION_ID",
+    "opera": "IDM_OPERA_EXTENSION_ID",
 }
 
 _BUILTIN_IDS = {
     "chrome": CHROME_EXTENSION_ID,
     "edge": EDGE_EXTENSION_ID,
     "firefox": FIREFOX_EXTENSION_ID,
+    "brave": BRAVE_EXTENSION_ID,
+    "opera": OPERA_EXTENSION_ID,
 }
 
 
@@ -99,7 +113,7 @@ def native_manifest(
         "path": str(path),
         "type": "stdio",
     }
-    if browser in {"chrome", "edge"}:
+    if browser in _CHROMIUM_BROWSERS:
         manifest["allowed_origins"] = [extension_origin(browser, environ)]
     elif browser == "firefox":
         manifest["allowed_extensions"] = [extension_id_for(browser, environ)]
@@ -124,7 +138,7 @@ def validate_native_manifest(
         problems.append("path must be an absolute path.")
     elif host_path is not None and Path(path) != Path(host_path):
         problems.append("path does not match the installed native host.")
-    if browser in {"chrome", "edge"}:
+    if browser in _CHROMIUM_BROWSERS:
         origins = manifest.get("allowed_origins")
         if not isinstance(origins, list) or not origins:
             problems.append("allowed_origins must be a non-empty list.")
@@ -147,12 +161,16 @@ def validate_native_manifest(
 
 
 __all__ = [
+    "BRAVE_EXTENSION_ID",
+    "BRAVE_EXTENSION_KEY",
     "CHROME_EXTENSION_ID",
     "CHROME_EXTENSION_KEY",
     "EDGE_EXTENSION_ID",
     "EDGE_EXTENSION_KEY",
     "FIREFOX_EXTENSION_ID",
     "NATIVE_HOST_NAME",
+    "OPERA_EXTENSION_ID",
+    "OPERA_EXTENSION_KEY",
     "builtin_extension_id",
     "extension_id_for",
     "extension_origin",

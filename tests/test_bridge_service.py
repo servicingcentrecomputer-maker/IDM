@@ -473,6 +473,192 @@ def test_unsupported_message_type(service) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Page link capture
+# ---------------------------------------------------------------------------
+
+
+def _capture(**overrides):
+    message = {
+        "type": "capture_page_links",
+        "request_id": "req-capture01",
+        "browser": "chrome",
+        "extension_id": CHROME_EXTENSION_ID,
+        "page_url": "https://example.com/index.html",
+        "page_title": "Example index",
+        "links": [
+            {"url": "https://example.com/files/a.zip", "filename": "a.zip"},
+            {"url": "https://example.com/files/b.pdf"},
+        ],
+    }
+    message.update(overrides)
+    return message
+
+
+def test_capture_queues_every_link(service, settings, manager) -> None:
+    response = _call(service, _capture())
+    assert response["ok"] is True
+    assert response["type"] == "page_captured"
+    assert (response["added"], response["skipped"], response["rejected"]) == (
+        2,
+        0,
+        0,
+    )
+    assert sorted(item.filename for item in manager.items()) == ["a.zip", "b.pdf"]
+
+    item = next(entry for entry in manager.items() if entry.filename == "b.pdf")
+    assert item.url == "https://example.com/files/b.pdf"
+    assert item.folder == settings.download_dir
+    assert item.page_url == "https://example.com/index.html"
+    assert item.page_title == "Example index"
+    assert item.referrer == "https://example.com/index.html"
+    assert item.source_browser == "chrome"
+
+
+def test_capture_confirms_the_page_first(qt_app, settings, manager, tmp_path) -> None:
+    seen: list[dict] = []
+    service = BrowserIntegrationService(
+        settings,
+        manager,
+        capture_prompt=lambda payload: (
+            seen.append(payload) or [payload["links"][1]]
+        ),
+        descriptor_path=tmp_path / "runtime" / "bridge.json",
+    )
+    try:
+        response = _call(service, _capture())
+    finally:
+        service.stop()
+
+    assert response["added"] == 1
+    assert [item.filename for item in manager.items()] == ["b.pdf"]
+    assert seen[0]["page_title"] == "Example index"
+    assert seen[0]["browser_display"] == "Google Chrome"
+    assert len(seen[0]["links"]) == 2
+
+
+def test_capture_cancellation_adds_nothing(
+    qt_app, settings, manager, tmp_path
+) -> None:
+    service = BrowserIntegrationService(
+        settings,
+        manager,
+        capture_prompt=lambda payload: None,
+        descriptor_path=tmp_path / "runtime" / "bridge.json",
+    )
+    try:
+        response = _call(service, _capture())
+    finally:
+        service.stop()
+    assert response["ok"] is False
+    assert response["error"]["code"] == "cancelled"
+    assert manager.items() == []
+
+
+def test_capture_skips_links_already_downloading(
+    service, settings, manager
+) -> None:
+    manager.add_download(
+        "https://example.com/files/a.zip",
+        "a.zip",
+        settings.download_dir,
+        start_immediately=False,
+    )
+    response = _call(service, _capture())
+    assert response["added"] == 1
+    assert response["skipped"] == 1
+
+
+def test_capture_asks_for_one_folder_for_the_whole_page(
+    qt_app, settings, manager, tmp_path
+) -> None:
+    settings.location_config = DownloadLocationConfig(MODE_ASK)
+    chosen = tmp_path / "Chosen"
+    chosen.mkdir()
+    prompts: list[str] = []
+    service = BrowserIntegrationService(
+        settings,
+        manager,
+        folder_prompt=lambda name, folder, browser: (
+            prompts.append(name) or str(chosen)
+        ),
+        descriptor_path=tmp_path / "runtime" / "bridge.json",
+    )
+    try:
+        response = _call(
+            service,
+            _capture(
+                links=[
+                    {"url": f"https://example.com/f{i}.zip"} for i in range(3)
+                ]
+            ),
+        )
+    finally:
+        service.stop()
+
+    assert response["added"] == 3
+    assert len(prompts) == 1
+    assert {item.folder for item in manager.items()} == {str(chosen)}
+
+
+def test_folder_cancellation_stops_the_capture(
+    qt_app, settings, manager, tmp_path
+) -> None:
+    settings.location_config = DownloadLocationConfig(MODE_ASK)
+    service = BrowserIntegrationService(
+        settings,
+        manager,
+        folder_prompt=lambda name, folder, browser: None,
+        descriptor_path=tmp_path / "runtime" / "bridge.json",
+    )
+    try:
+        response = _call(service, _capture())
+    finally:
+        service.stop()
+    assert response["ok"] is False
+    assert response["error"]["code"] == "cancelled"
+    assert manager.items() == []
+
+
+def test_capture_reports_links_idm_could_not_queue(
+    qt_app, settings, manager, tmp_path
+) -> None:
+    archives = tmp_path / "Archives"
+    settings.location_config = DownloadLocationConfig(
+        MODE_TYPE, [LocationRule(str(archives), ("zip", "pdf"))]
+    )
+    service = BrowserIntegrationService(
+        settings,
+        manager,
+        create_prompt=lambda folder: False,
+        descriptor_path=tmp_path / "runtime" / "bridge.json",
+    )
+    try:
+        response = _call(service, _capture())
+    finally:
+        service.stop()
+    assert response["ok"] is True
+    assert (response["added"], response["rejected"]) == (0, 2)
+    assert manager.items() == []
+
+
+def test_capture_without_downloadable_links_is_refused(service, manager) -> None:
+    response = _call(
+        service,
+        _capture(links=[{"url": "mailto:someone@example.com"}]),
+    )
+    assert response["ok"] is False
+    assert response["error"]["code"] == "no_capturable_links"
+    assert manager.items() == []
+
+
+def test_repeated_capture_request_id_is_not_queued_twice(service, manager) -> None:
+    first = _call(service, _capture())
+    second = _call(service, _capture())
+    assert first == second
+    assert len(manager.items()) == 2
+
+
+# ---------------------------------------------------------------------------
 # Transport: token authentication over the loopback bridge
 # ---------------------------------------------------------------------------
 

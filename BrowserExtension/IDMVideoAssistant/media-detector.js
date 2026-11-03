@@ -103,6 +103,9 @@
 
   const MAX_LINKS = 4000;
   const MAX_ITEMS = 40;
+  // Keep the batch under the cap the IDM native host enforces, so a page with
+  // thousands of links does not fail the request outright.
+  const MAX_CAPTURE_LINKS = 100;
 
   function isHttpUrl(value) {
     if (typeof value !== "string") return false;
@@ -516,11 +519,83 @@
     return count > 9 ? "9+" : String(count);
   }
 
+  /**
+   * Every downloadable link the page itself publishes.
+   *
+   * Unlike collectMedia this is not limited to the configured media types: it
+   * is the list a person reviews before handing a batch to IDM.  Fragment
+   * targets, non-HTTP schemes and restricted platform streams are skipped.
+   */
+  function collectLinks(documentLike, options) {
+    const opts = options || {};
+    const pageUrl = String(opts.pageUrl || "");
+    const page = {
+      url: pageUrl,
+      title: safeTitle(opts.pageTitle, ""),
+      domain: domainOf(pageUrl),
+    };
+    if (!isHttpUrl(pageUrl)) {
+      return { page, links: [], restricted: null, total: 0 };
+    }
+    const platform = restrictedPlatformFor(pageUrl);
+    if (platform) {
+      return {
+        page,
+        links: [],
+        restricted: {
+          platform: platform,
+          page_url: pageUrl,
+          message: restrictionMessage(platform),
+          official: officialOptionsFor(pageUrl, platform),
+        },
+        total: 0,
+      };
+    }
+    if (!documentLike || typeof documentLike.querySelectorAll !== "function") {
+      return { page, links: [], restricted: null, total: 0 };
+    }
+
+    const anchors = documentLike.querySelectorAll("a[href]");
+    const scanCount = Math.min(anchors.length || 0, MAX_LINKS);
+    const found = new Map();
+    for (let index = 0; index < scanCount; index += 1) {
+      const link = anchors[index];
+      if (!link || typeof link.getAttribute !== "function") continue;
+      const href = link.getAttribute("href");
+      if (!href || href.startsWith("#")) continue;
+      let url;
+      try {
+        url = new URL(href, pageUrl).href;
+      } catch {
+        continue;
+      }
+      if (!isHttpUrl(url) || found.has(url)) continue;
+      if (isRestrictedMediaHost(url)) continue;
+      const downloadName = String(link.getAttribute("download") || "").trim();
+      const filename = downloadName || filenameFromUrl(url);
+      found.set(url, {
+        url: url,
+        filename: filename,
+        title: safeTitle(link.textContent, filename),
+        extension: extensionOf(url),
+      });
+    }
+    const links = Array.from(found.values());
+    return {
+      page: page,
+      links: links.slice(0, MAX_CAPTURE_LINKS),
+      restricted: null,
+      total: links.length,
+    };
+  }
+
   const api = {
     DEFAULT_FILE_TYPES,
     VIDEO_EXTENSIONS,
     AUDIO_EXTENSIONS,
     RESTRICTED_PLATFORMS,
+    MAX_CAPTURE_LINKS,
+    collectLinks,
     collectMedia,
     countLabel,
     domainOf,

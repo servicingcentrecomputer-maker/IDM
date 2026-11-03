@@ -10,7 +10,7 @@ from urllib.parse import unquote, urlparse
 
 from ..constants import CATEGORY_GENERAL, EXTENSION_TO_CATEGORY
 
-_ALLOWED_SCHEMES = {"http", "https"}
+_ALLOWED_SCHEMES = {"http", "https", "ftp", "ftps"}
 _WINDOWS_RESERVED = {
     "CON", "PRN", "AUX", "NUL",
     *(f"COM{i}" for i in range(1, 10)),
@@ -38,7 +38,9 @@ def validate_url(raw: str) -> str:
 
     scheme = parsed.scheme.lower()
     if scheme not in _ALLOWED_SCHEMES:
-        raise InvalidUrlError("Only HTTP and HTTPS links are supported.")
+        raise InvalidUrlError(
+            "Only HTTP, HTTPS, FTP and FTPS links are supported."
+        )
     if not parsed.hostname:
         raise InvalidUrlError("The link is missing a host name.")
     if parsed.username or parsed.password:
@@ -81,6 +83,31 @@ def redact_url(url: str) -> str:
     except ValueError:
         port = ""
     return f"{scheme}://{parsed.hostname}{port}/…"
+
+
+# Secrets reach IDM from outside: a proxy URL, an exception raised by the
+# transport, or a server message that echoes the request. These patterns drop
+# the secret part while keeping the text recognisable enough to debug with.
+_URL_CREDENTIALS = re.compile(r"([a-zA-Z][a-zA-Z0-9+.-]*://)(?:[^/\s:@]+:[^/\s@]+@)")
+_SECRET_QUERY = re.compile(
+    r"((?<![A-Za-z0-9_])(?:password|passwd|pass|pwd|token|access_token|refresh_token|"
+    r"secret|api_key|apikey|key|auth|signature|sig)['\"]?\s*[=:]\s*)[^\s&,\"']*",
+    re.IGNORECASE,
+)
+_AUTH_HEADER = re.compile(
+    r"(authorization\s*[:=]\s*(?:basic|bearer|digest)\s+)[^\s,;]+",
+    re.IGNORECASE,
+)
+_REDACTED = "[redacted]"
+
+
+def scrub_secrets(text: str) -> str:
+    """Remove credentials from free-form text such as an error message."""
+    if not text:
+        return text
+    cleaned = _URL_CREDENTIALS.sub(rf"\g<1>{_REDACTED}@", text)
+    cleaned = _SECRET_QUERY.sub(rf"\g<1>{_REDACTED}", cleaned)
+    return _AUTH_HEADER.sub(rf"\g<1>{_REDACTED}", cleaned)
 
 
 def sanitize_filename(name: str, fallback: str = "download") -> str:

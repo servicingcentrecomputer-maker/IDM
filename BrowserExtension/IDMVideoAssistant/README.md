@@ -1,8 +1,9 @@
 # IDM Video Assistant 3.6.1
 
-A Chrome / Microsoft Edge Manifest V3 extension that finds direct media links on
-the page you are viewing, shows their metadata, and sends an authorised link to
-the IDM desktop application through the `com.idm.native` native messaging host.
+A Chrome / Microsoft Edge / Brave / Opera Manifest V3 extension that finds direct
+media links on the page you are viewing, shows their metadata, and sends an
+authorised link to the IDM desktop application through the `com.idm.native`
+native messaging host.
 
 The extension is deliberately narrow. It does **not** extract protected streams,
 decipher signatures, use browser cookies, bypass DRM or platform download rules,
@@ -25,6 +26,10 @@ or run shell commands.
   IDM is asked to accept it through the same dialog, and the browser copy is
   cancelled only after IDM creates the task. If IDM is unavailable, the dialog is
   cancelled or the link is rejected, the browser download resumes.
+- **Capture links** collects the ordinary links on the current page (up to 100),
+  sends them to IDM as one request, and lets IDM's **Links found on this page**
+  dialog pick which of them to download. A restricted platform page returns no
+  links, and the batch is confirmed once rather than link by link.
 - Adds **Download with IDM**, **Download with IDM to…** and **Send this media to
   IDM** context menu actions.
 - Recognises YouTube and YouTube Music pages and displays Google's official
@@ -61,7 +66,8 @@ or run shell commands.
 
 ## Requirements
 
-- Google Chrome 102+ or Microsoft Edge 102+.
+- Google Chrome 102+, Microsoft Edge 102+, Brave or Opera (both Chromium-based,
+  so the same unpacked folder loads in all four).
 - IDM 3.6.1 running locally.
 - The `com.idm.native` native messaging host registered for the browser you use.
   The IDM installer can do this, or you can run the registration script from a
@@ -69,8 +75,10 @@ or run shell commands.
 
 The manifest pins the development public key, so the unpacked extension keeps the
 ID `ljckgbgnolmopacdgmmgaijleadcmpgn` across reloads. The native host allowlist
-uses the same ID. A store build with a different ID must update the native host
-allowlist (`IDM_CHROME_EXTENSION_ID` / `IDM_EDGE_EXTENSION_ID`).
+uses the same ID. Brave and Opera derive that same ID from the pinned key, but a
+store build with a different ID must update the native host allowlist
+(`IDM_CHROME_EXTENSION_ID`, `IDM_EDGE_EXTENSION_ID`, `IDM_BRAVE_EXTENSION_ID` or
+`IDM_OPERA_EXTENSION_ID`).
 
 Use either the basic **IDM Integration Module** or this **IDM Video Assistant** in
 a browser profile, not both: they share a pinned extension ID. The Video
@@ -84,7 +92,11 @@ Assistant includes the basic interception and context-menu features.
    unpacked** → select the `IDMVideoAssistant` folder.
 4. Edge: open `edge://extensions` → enable **Developer mode** → **Load
    unpacked** → select the same folder.
-5. Open the toolbar popup and press **Test connection**.
+5. Brave: open `brave://extensions` → enable **Developer mode** → **Load
+   unpacked** → select the same folder.
+6. Opera: open `opera://extensions` → enable **Developer mode** → **Load
+   unpacked** → select the same folder.
+7. Open the toolbar popup and press **Test connection**.
 
 See [InstallationGuide.md](InstallationGuide.md) for the full procedure,
 including verification and troubleshooting.
@@ -143,6 +155,24 @@ action. It is handled as an ordinary file, not as a YouTube stream.
 
 The toolbar badge shows a check after a successful add and an exclamation mark
 after a rejection.
+
+## Page link capture
+
+`Capture links` in the popup is a separate, explicitly user-started flow:
+
+1. The popup asks the service worker for the current tab only.
+2. The content script walks `<a href>` in that tab, keeps absolute `http(s)`
+   links, drops fragments, duplicates and restricted stream hosts, and reports at
+   most 100 links.
+3. The service worker builds one `capture_page_links` request with the page URL
+   and title.
+4. IDM shows **Links found on this page**, lets the user select or deselect each
+   link, and queues the chosen ones — one folder prompt for the whole batch, not
+   one per link.
+5. Links already downloading are reported as skipped; links IDM cannot queue are
+   reported as rejected. Cancelling the dialog adds nothing.
+
+Nothing is fetched, and a restricted platform page reports no capturable links.
 
 ## Permissions and privacy
 

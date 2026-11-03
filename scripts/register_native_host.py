@@ -37,7 +37,10 @@ from integrations.registration import (  # noqa: E402
 
 def parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Register the IDM native messaging host for Chrome, Edge and Firefox."
+        description=(
+            "Register the IDM native messaging host for Chrome, Edge, Firefox, "
+            "Brave and Opera."
+        )
     )
     parser.add_argument(
         "command", choices=("install", "uninstall", "status"), help="Action to perform."

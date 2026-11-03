@@ -6,25 +6,29 @@ layout while using an original icon set, an SQLite-backed history, a real HTTP
 download engine, pause/resume with HTTP Range, a queue, schedules and three
 interface themes.
 
-The current build is Version 3.6.1, a **Classic + Modern** interface release.
-The main window now pairs a compact classic IDM layout with the modern design
-system: File/Downloads/View/Tasks/Help menus, a toolbar with Add URL, Resume,
-Resume All, Stop, Stop All, Delete, Delete Completed, Options, Scheduler and
-Queue, a sidebar that includes user-created categories with live counts, a
-seven-column download table with a custom progress meter and status pills, and a
-status bar that reports active transfers, current speed and total downloaded
-data. A new **Download Complete** window shows the real average speed, finish
-time, size and source when a transfer ends. Classic Light, Modern Light and
-Modern Dark switch instantly without a restart. The 3.6.0 **Download File Info**
-dialog, real **Start Download**, **Download Later** and **Cancel** actions, the
-3.5.0 workspace pages (dashboard, video cards, Browser Assistant, Settings,
-Update Center) and the reduced-motion behaviour are all preserved.
+The current build is Version 3.6.3, a capability release on top of the 3.6.2
+Hybrid UI. Options → Download Settings now limits bandwidth three ways — no
+limit, a fixed maximum, or a percentage of the link IDM measures from real
+traffic — and the Download Progress window plots speed over time against the
+limit that is actually binding. The release adds a **Properties** window, Open,
+Rename, Refresh Download Link, manual checksum verification and batch URL entry,
+FTP and FTPS transfers, dynamic re-segmentation of stalled connections, a system
+tray, start-with-Windows, a Connection Settings tab for proxies, per-site
+credentials and timeouts, page-link capture in the Video Assistant, and Brave
+and Opera registration. Passwords go to Windows Credential Manager and every log
+record is scrubbed of secrets. The 3.6.2 shell, Hybrid Light and Dark themes,
+dashboard, responsive columns and sort controls are unchanged, as is the
+3.6.1 Classic + Modern layout beneath them: File/Downloads/View/Tasks/Help
+menus, the toolbar, user-created categories with live counts, the download table
+with its custom progress meter and status pills, and the **Download Complete**
+window.
 The complete application shell, the multi-connection segmented download engine
 and the browser integration are included. The engine supports HTTP Range
 transfers over up to 16 parallel connections, resumable segmented downloads that
 survive a restart, automatic retry, global and per-download speed limits, and a
 persistent queue. Servers that do not support Range fall back to a single
-connection automatically. See [ReleaseNotes.md](ReleaseNotes.md).
+connection automatically. See [ReleaseNotes.md](ReleaseNotes.md) for what is new
+and what was requested but not implemented in this version.
 
 An About window with **Check for Updates** is included, backed by a real signed
 release manifest, resumable installer download, SHA-256 and Windows Authenticode
@@ -32,9 +36,9 @@ verification, and a separate `IDM_Updater.exe` process. Automatic updates are
 implemented but intentionally inert until an HTTPS endpoint and trusted publisher
 are configured; see [docs/UPDATES.md](docs/UPDATES.md).
 
-Chrome, Edge and Firefox integrations are included: a per-browser extension
-detects downloads, pauses the browser copy, asks IDM to accept it, and cancels
-the browser download only after acceptance. IDM keeps the transfer in its
+Chrome, Edge, Firefox, Brave and Opera integrations are included: a per-browser
+extension detects downloads, pauses the browser copy, asks IDM to accept it, and
+cancels the browser download only after acceptance. IDM keeps the transfer in its
 existing queue with browser, filename, URL and progress shown in the normal UI.
 See [docs/BROWSER_INTEGRATION.md](docs/BROWSER_INTEGRATION.md).
 
@@ -57,9 +61,9 @@ available for testing on this machine.
 A packaged build is produced by the build automation:
 
 - Application: `dist\IDM\IDM.exe`
-- Installer: `dist-installer\IDM-Setup-3.6.1.exe`
+- Installer: `dist-installer\IDM-Setup-3.6.3.exe`
 
-Run `IDM-Setup-3.6.1.exe` to install IDM, create shortcuts, optionally start it with
+Run `IDM-Setup-3.6.3.exe` to install IDM, create shortcuts, optionally start it with
 Windows, and register it in Add/Remove Programs. The browser integration page
 offers one optional task per detected browser; selecting it registers the
 native messaging host for the current user. Extension ZIP packages are shipped
@@ -74,10 +78,10 @@ IDs and store publishing are covered in
 
 ### Release package
 
-The 3.6.1 deliverables are assembled in `release\IDM-3.6.1-win64\` and
-`release\IDM-3.6.1-win64.zip`: the portable application (`IDM.exe` with
+The 3.6.3 deliverables are assembled in `release\IDM-3.6.3-win64\` and
+`release\IDM-3.6.3-win64.zip`: the portable application (`IDM.exe` with
 `_internal\`, `IDM_Updater.exe` and `IDM_NativeHost.exe`),
-`IDM-Setup-3.6.1.exe`, the unpacked `BrowserExtension\IDMVideoAssistant\`,
+`IDM-Setup-3.6.3.exe`, the unpacked `BrowserExtension\IDMVideoAssistant\`,
 the extension archives, release notes, changelog, design-system guide, testing
 report and `SHA256SUMS.txt`. Source remains editable in the repository root.
 
@@ -127,7 +131,8 @@ python main.py
 
 ## Browser integration
 
-Three extensions are provided: Manifest V3 for Chrome and Edge and a
+Three extension packages are provided: Manifest V3 for Chrome and Edge (the same
+unpacked folder loads in Brave and Opera) and a
 Firefox-compatible Manifest V2 extension with a stable Gecko ID. They use only
 `nativeMessaging`, `downloads`, the context-menu API and `storage`.
 
@@ -175,7 +180,8 @@ documented in
 ### IDM Video Assistant
 
 `BrowserExtension\IDMVideoAssistant\` contains a separate Manifest V3 extension
-for Chrome and Edge that adds page-side media detection. It shares the pinned
+for Chrome, Edge, Brave and Opera that adds page-side media detection and a
+**Capture links** batch of the links on the current page. It shares the pinned
 extension ID and the `com.idm.native` host with the basic integration, so use one
 of them per browser profile. It lists direct HTTP(S) media links and observable
 HTML5 media sources, sends a selected link to IDM, and recognises YouTube and
@@ -188,12 +194,13 @@ Install it from the unpacked folder, or build its ZIP package:
 
 ```powershell
 .\.venv\Scripts\python.exe scripts\package_video_assistant.py
-# dist-extensions\IDM_Video_Assistant_3.6.1.zip, no CRX
+# dist-extensions\IDM_Video_Assistant_3.6.3.zip, no CRX
 ```
 
 Its [README](BrowserExtension/IDMVideoAssistant/README.md) and
 [InstallationGuide](BrowserExtension/IDMVideoAssistant/InstallationGuide.md)
-cover permissions, Chrome/Edge loading, native-host registration and the manual
+cover permissions, loading the folder in Chrome, Edge, Brave and Opera,
+native-host registration and the manual
 verification checklist.
 
 Known platform limits: POST form downloads, Blob/MediaSource streams, browser-
@@ -602,8 +609,13 @@ The test suite uses a local threaded HTTP server with routes for:
 - central configuration precedence, release signing CLI and manifest validator CLI
 - native messaging framing (little-endian length prefix), truncation, 1 MiB
   limits, invalid JSON, URL/filename/MIME/size validation and duplicate TTL
-- extension allowlisting, pinned key-derived Chrome/Edge IDs, Firefox Gecko ID,
-  browser-specific `allowed_origins` / `allowed_extensions` manifests
+- extension allowlisting, pinned key-derived Chrome/Edge/Brave/Opera IDs, Firefox
+  Gecko ID, browser-specific `allowed_origins` / `allowed_extensions` manifests,
+  calling-process attribution for all five browsers and the installer/native-host
+  registry keys agreeing per browser
+- page link capture: batch validation and caps, one folder prompt per page,
+  already-active links skipped, cancellation adding nothing and idempotent
+  request IDs
 - default/ask/file-type location modes, wildcard and duplicate-rule rejection,
   missing-folder approval, disk-space headroom, traversal and reserved-name
   rejection

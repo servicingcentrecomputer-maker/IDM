@@ -1,7 +1,8 @@
 # IDM Browser Integration
 
-IDM integrates with Google Chrome, Microsoft Edge and Mozilla Firefox through
-a browser extension plus a native messaging host. When interception is enabled,
+IDM integrates with Google Chrome, Microsoft Edge, Mozilla Firefox, Brave and
+Opera through a browser extension plus a native messaging host. When
+interception is enabled,
 the extension pauses the browser's own download, asks IDM to accept it, and
 cancels the browser copy **only after IDM confirms acceptance**. If IDM is not
 running, rejects the link, or the native host is unavailable, the browser
@@ -18,19 +19,21 @@ download is resumed so the user still gets the file.
 | Desktop bridge | `integrations/bridge_server.py` | Authenticated 127.0.0.1 NDJSON endpoint |
 | Desktop service | `integrations/service.py` | Adds accepted transfers to the existing queue and answers status/list requests |
 | Location policy | `downloads/location_manager.py` | Default / ask / file-type destination modes and filesystem safety |
-| Chrome extension | `extensions/chrome/` | Manifest V3 service worker, popup and context menu |
-| Edge extension | `extensions/edge/` | Manifest V3; same key and extension ID as Chrome |
+| Chrome extension | `extensions/chrome/` | Manifest V3 service worker, popup and context menu; also loads in Brave and Opera |
+| Edge extension | `extensions/edge/` | Manifest V3; same key and extension ID as Chrome, and the same runtime browser detection |
 | Firefox extension | `extensions/firefox/` | Manifest V2 persistent background page with a stable Gecko ID |
-| IDM Video Assistant | `BrowserExtension/IDMVideoAssistant/` | Separate MV3 Chrome/Edge extension for direct media detection with the same native host |
+| IDM Video Assistant | `BrowserExtension/IDMVideoAssistant/` | Separate MV3 extension for Chrome, Edge, Brave and Opera: direct media detection, page link capture and the same native host |
 
 ### IDM Video Assistant
 
 `BrowserExtension/IDMVideoAssistant/` is an optional, separate Manifest V3
-extension for Chrome and Edge. It adds page-side detection of direct HTTP(S)
-media links and observable HTML5 media sources, a media list with **Send to
-IDM**, and official-options cards for YouTube and YouTube Music. It shares the
+extension for Chrome, Edge, Brave and Opera. It adds page-side detection of
+direct HTTP(S) media links and observable HTML5 media sources, a media list with
+**Send to IDM**, a **Capture links** batch of the ordinary links on the current
+page, and official-options cards for YouTube and YouTube Music. It shares the
 pinned extension ID and `com.idm.native` allowlist with the basic extension, so
-use one of them per browser profile.
+use one of them per browser profile. Brave and Opera are Chromium browsers, so
+the same pinned key derives the same extension ID in all four.
 
 It does not extract protected streams or `googlevideo.com` URLs, and YouTube
 pages only offer Google's official Premium, Studio and Help options. Load it
@@ -54,6 +57,8 @@ optional task per browser:
 - **Integrate with Google Chrome**
 - **Integrate with Microsoft Edge**
 - **Integrate with Mozilla Firefox**
+- **Integrate with Brave**
+- **Integrate with Opera**
 
 A task is shown as checked only when the browser is detected. Selecting a task
 writes the browser-specific native messaging manifest into
@@ -63,11 +68,15 @@ writes the browser-specific native messaging manifest into
 HKCU\Software\Google\Chrome\NativeMessagingHosts\com.idm.native
 HKCU\Software\Microsoft\Edge\NativeMessagingHosts\com.idm.native
 HKCU\Software\Mozilla\NativeMessagingHosts\com.idm.native
+HKCU\Software\BraveSoftware\Brave-Browser\NativeMessagingHosts\com.idm.native
+HKCU\Software\Opera Software\Opera Stable\NativeMessagingHosts\com.idm.native
 ```
 
 Both the 64-bit and 32-bit registry views are written because browsers may run
-as either architecture. Chrome and Edge receive `allowed_origins`; Firefox
-receives `allowed_extensions`. Uninstalling removes only IDM's own value and
+as either architecture. Chrome, Edge, Brave and Opera receive `allowed_origins`;
+Firefox receives `allowed_extensions`. Opera's key is named after the mainline
+browser; Opera GX is a separate product with its own registry root and is not
+registered here. Uninstalling removes only IDM's own value and
 only deletes the key when nothing else remains.
 
 The installer ships extension ZIP packages in
@@ -107,18 +116,23 @@ To load the unpacked extensions while developing:
 - Firefox: `about:debugging#/runtime/this-firefox` → **Load Temporary Add-on**
   → `extensions\firefox\manifest.json`.
 
+The Video Assistant folder loads unpacked in Chrome, Edge, Brave
+(`brave://extensions`) and Opera (`opera://extensions`) without modification.
+
 The Chrome and Edge manifests embed a development public key so the unpacked
 extension keeps the ID `ljckgbgnolmopacdgmmgaijleadcmpgn` across reloads. This
 key was generated only to pin that development ID; it is not used to sign
 packages. Store-assigned IDs and signed Firefox XPI IDs must be supplied to the
-host allowlist with `IDM_CHROME_EXTENSION_ID`, `IDM_EDGE_EXTENSION_ID` and
-`IDM_FIREFOX_EXTENSION_ID` (or by rebuilding the constants in
+host allowlist with `IDM_CHROME_EXTENSION_ID`, `IDM_EDGE_EXTENSION_ID`,
+`IDM_FIREFOX_EXTENSION_ID`, `IDM_BRAVE_EXTENSION_ID` and
+`IDM_OPERA_EXTENSION_ID` (or by rebuilding the constants in
 `integrations/browser_registry.py`). See
 [BROWSER_STORE_PUBLISHING.md](BROWSER_STORE_PUBLISHING.md).
 
 ## Download interception
 
-1. Chrome or Edge creates a download (`downloads.onCreated`); Firefox uses the
+1. Chrome, Edge, Brave or Opera creates a download (`downloads.onCreated`);
+   Firefox uses the
    same event through `browser.downloads`.
 2. The extension ignores downloads it did not create, downloads started by an
    extension (`byExtensionId`), non-HTTP(S) URLs, and URLs it just handed to
@@ -158,6 +172,35 @@ folder, recent transfers and the last error. It provides:
 
 Popup content is rendered with `textContent`; browser- or server-supplied names
 are never inserted as HTML.
+
+## Page link capture
+
+The Video Assistant popup's **Capture links** button is a deliberately separate,
+user-started flow. It hands IDM the ordinary links on the current page rather
+than one media URL at a time:
+
+1. The popup addresses the active tab only; the content script walks
+   `<a href>` in that tab and keeps absolute `http(s)` results. Fragments,
+   duplicates, restricted stream hosts and non-HTTP schemes are dropped.
+2. At most `MAX_CAPTURE_LINKS` (100) links leave the browser, so one request
+   fits a single native messaging frame and IDM never becomes an unattended
+   crawler. The extension and the native host enforce the same cap, and a test
+   asserts they agree.
+3. The native host validates the batch with `normalize_capture_request`; an
+   unusable entry is discarded rather than failing the whole capture, and a
+   capture with nothing downloadable is refused.
+4. IDM shows **Links found on this page** with every entry pre-selected and a
+   live count. Nothing is queued before the user confirms.
+5. The accepted links are resolved through the normal location policy, but the
+   folder prompt is answered once for the whole batch. Backing out of that
+   prompt stops the batch instead of falling back to a folder the user did not
+   choose.
+6. The response reports `requested`, `added`, `skipped` (already downloading)
+   and `rejected` (rejected by validation or the filesystem), and the request is
+   idempotent by `request_id`.
+
+A restricted platform page answers `restricted_platform` and offers Google's
+official options; no page links are captured from it.
 
 ## Download locations
 
@@ -231,6 +274,12 @@ path the extension uses.
   validated by the native host and again by the desktop service.
 - Only the pinned extension IDs may control IDM. Registry configuration alone
   is not treated as authorization.
+- Each request names the browser that sent it, and the native host compares that
+  with the process that actually launched it (a Toolhelp parent-chain walk), so a
+  request cannot borrow another browser's allowlist entry. Because Brave and
+  Opera load the same folders, the extensions resolve that name at runtime from
+  the user agent and Brave's own API rather than hard-coding it; the folder's own
+  browser is only the fallback.
 - The native host communicates with the browser only through stdio frames; it
   never writes arbitrary data to stdout.
 - The loopback bridge binds to 127.0.0.1 on a random port, requires a 32-byte
@@ -240,10 +289,14 @@ path the extension uses.
   tokens are accepted or forwarded. Authenticated browser sessions are not
   reused; see the limitations below.
 - No DRM, paywall, login or access-control bypass is implemented.
+- A page capture is bounded: at most 100 links leave the browser per request,
+  the batch is confirmed by the user in IDM before anything is queued, and the
+  native host drops entries that fail URL or filename validation.
 - The extension requests only `nativeMessaging`, `downloads`, `contextMenus`
   or `menus`, and `storage`. It has no content scripts, host permissions,
   `webRequest`, `tabs` or cookie access. The separate IDM Video Assistant adds
-  `activeTab` and its declared HTTP(S) content scripts for page media detection;
+  `activeTab` and its declared HTTP(S) content scripts for page media detection
+  and the user-started link capture;
   it still has no `tabs`, `history`, `cookies`, `webRequest` or
   `host_permissions`.
 
@@ -258,16 +311,19 @@ These are platform constraints, not configuration options:
 | "Save as" and print-to-PDF | Browser-internal saves may not produce an ordinary download item and can bypass interception. |
 | Private/incognito windows | Extensions must be explicitly allowed in private windows; enterprise policy may disable this. |
 | Interception races | A download can progress briefly before it is paused. The extension cancels only after IDM acceptance, so a failed request resumes from the browser's current progress. |
-| Service worker suspension | Chrome/Edge MV3 may suspend the service worker. Interactive native messages are awaited; the duplicate cache makes a retried request idempotent. Firefox uses a persistent MV2 background page. |
-| Store IDs | Store packaging may assign a different extension ID. The native host allowlist must be updated to that ID; the embedded development key is not a store signing key. |
+| Service worker suspension | Chromium MV3 (Chrome, Edge, Brave, Opera) may suspend the service worker. Interactive native messages are awaited; the duplicate cache makes a retried request idempotent. Firefox uses a persistent MV2 background page. |
+| Store IDs | Store packaging may assign a different extension ID. The native host allowlist must be updated to that ID; the embedded development key is not a store signing key. Brave and Opera derive the unpacked ID from the same key, so only a store build differs. |
+| Opera editions | IDM registers `Software\Opera Software\Opera Stable`, the mainline browser. Opera GX and Beta use their own registry roots and need `scripts\register_native_host.py install --browser opera` adapted for them. |
 | Native host path | Chromium expects the manifest `path` to point to an executable. The `--dev` `.cmd` launcher is for development only. |
 | Firefox signing | Release Firefox only installs signed XPIs. Temporary add-ons work for development; distribution requires signing through Mozilla Add-ons. |
-| Browser API versions | Chrome/Edge require Chrome 102+ for the MV3 APIs used; Firefox requires 109+. |
+| Browser API versions | Chrome, Edge, Brave and Opera require Chromium 102+ for the MV3 APIs used; Firefox requires 109+. Brave reports itself as Chrome in the user agent, so the extension identifies it through `navigator.brave`. |
 
 ## Verification
 
 Automated coverage in `tests/` includes protocol framing and limits, URL and
 filename validation, duplicate tracking, allowlist and manifest generation,
+calling-process attribution for all five browsers, page-capture normalization and
+batching,
 location modes and filesystem safety, bridge token authentication, service
 acceptance/ask/duplicate/unauthorized paths, native-host dispatch and offline
 behavior, registry installation and conflict-safe removal, extension manifests
@@ -289,8 +345,14 @@ manual checklist; it is not simulated by a headless test:
    resumes and the popup reports IDM unavailable.
 4. Turn interception off and confirm downloads stay in the browser.
 5. Test **Download with IDM** on a link, and the ask/type location modes.
-6. Repeat on Chrome, Edge and Firefox, including both 64-bit and 32-bit
-   registry views when available.
+6. Open a page with several ordinary links, press **Capture links**, deselect a
+   few, confirm one folder prompt answers the whole batch, then repeat and
+   cancel the IDM dialog to confirm nothing is added.
+7. Repeat on Chrome, Edge, Firefox, Brave and Opera, including both 64-bit and
+   32-bit registry views when available. Brave and Opera cannot be verified on a
+   machine that does not have them installed: confirm the popup's **Test
+   connection** reports the browser correctly, since IDM rejects a request whose
+   claimed browser differs from the process that launched the host.
 
 ## Uninstallation
 
@@ -298,5 +360,5 @@ The installer's uninstaller removes the native host, manifests and only IDM's
 own registry values for browsers that were registered. Settings, history and
 downloads under `%APPDATA%\IDM Download Manager` follow the normal uninstall
 choice and are kept by default. Extension removal is controlled by the browser
-(Chrome/Edge extension page, Firefox Add-ons); IDM never removes browser
-extensions automatically.
+(the Chromium `…://extensions` page in Chrome, Edge, Brave and Opera; Firefox
+Add-ons); IDM never removes browser extensions automatically.

@@ -25,9 +25,13 @@ application.
 ### Option A — IDM installer (recommended)
 
 1. Run `IDM-Setup-3.6.1.exe`.
-2. On the optional tasks page, select:
-   - **Integrate with Google Chrome**, and/or
-   - **Integrate with Microsoft Edge**.
+2. On the optional tasks page, select the browsers you use:
+   - **Integrate with Google Chrome**,
+   - **Integrate with Microsoft Edge**,
+   - **Integrate with Mozilla Firefox**,
+   - **Integrate with Brave**,
+   - **Integrate with Opera**.
+   A browser that is not installed on this computer is not offered.
 3. Finish the installation.
 
 The installer writes the browser manifest under
@@ -36,6 +40,9 @@ The installer writes the browser manifest under
 ```
 HKCU\Software\Google\Chrome\NativeMessagingHosts\com.idm.native
 HKCU\Software\Microsoft\Edge\NativeMessagingHosts\com.idm.native
+HKCU\Software\Mozilla\NativeMessagingHosts\com.idm.native
+HKCU\Software\BraveSoftware\Brave-Browser\NativeMessagingHosts\com.idm.native
+HKCU\Software\Opera Software\Opera Stable\NativeMessagingHosts\com.idm.native
 ```
 
 It does **not** install the extension. That remains an explicit browser action.
@@ -94,6 +101,27 @@ All**), then select the extracted folder. Chrome cannot load a ZIP directly.
 The **Allow extensions from other stores** switch is only needed for Chrome Web
 Store installs. It is not required for **Load unpacked**.
 
+### Brave
+
+1. Open `brave://extensions` in the address bar.
+2. Turn on **Developer mode** (top right).
+3. Click **Load unpacked** (or **Install unpacked extension**).
+4. Select the same folder as above.
+5. Confirm the name and the ID `ljckgbgnolmopacdgmmgaijleadcmpgn`. Brave derives
+   that ID from the same pinned key, so no host re-registration is needed.
+6. Turn **Shields → Block third-party cookies** off for the local host only if
+   Brave reports the native connection was blocked (it normally does not: native
+   messaging is not a web request).
+
+### Opera
+
+1. Open `opera://extensions` in the address bar.
+2. Turn on **Developer mode** (top right).
+3. Click **Load unpacked**.
+4. Select the same folder as above.
+5. Confirm the name and ID as for Brave. Opera GX is a different browser with its
+   own native host registration, so install into the browser you use.
+
 ### If the basic IDM extension is already loaded
 
 Chrome or Edge will not keep two extensions with the same ID. Remove or disable
@@ -128,6 +156,20 @@ The popup also shows the native host version and the active transfer count.
    paused, shown in IDM's dialog, and removed from the browser list after
    acceptance. Cancel the dialog (or stop IDM) and repeat: the browser download
    must resume.
+
+### Page link capture verification
+
+1. Open a page that lists several ordinary file links, such as a directory of
+   ZIPs.
+2. Open the popup and press **Capture links**.
+3. IDM shows **Links found on this page** with every link pre-selected and a
+   running count. Deselect one or two entries and press **Download Selected**.
+4. IDM asks for a folder once for the batch, not once per link, and the queued
+   transfers appear in the main table.
+5. Press **Cancel** in the IDM dialog instead: nothing is added and the popup
+   reports the capture was cancelled.
+6. Repeat on a YouTube page. The popup reports that the platform is restricted
+   and offers the official options; no links are captured.
 
 ### YouTube verification
 

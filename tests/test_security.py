@@ -8,14 +8,17 @@ from pathlib import Path
 import pytest
 
 from downloads.location_manager import MODE_DEFAULT, DownloadLocationConfig, safe_join
+from idm.core.logging_setup import SecretRedactionFilter
 from idm.core.settings import AppSettings
 from idm.core.url_utils import (
     InvalidUrlError,
     redact_url,
     sanitize_filename,
+    scrub_secrets,
     validate_url,
 )
 from idm.engine.manager import DownloadManager
+from idm.engine.worker import _clean_error
 from integrations.browser_registry import CHROME_EXTENSION_ID
 from integrations.protocol import normalize_download_request
 from integrations.service import BrowserIntegrationService
@@ -28,7 +31,7 @@ from integrations.service import BrowserIntegrationService
         "javascript:alert(1)",
         "data:text/html,<script>alert(1)</script>",
         "vbscript:msgbox(1)",
-        "ftp://example.com/file.zip",
+        "mailto:someone@example.com",
         "https://user:password@example.com/file.zip",
         "https://example.com/a b.zip",
         "",
@@ -142,3 +145,64 @@ def test_service_logs_redacted_urls(
         service.stop()
         manager.shutdown()
         settings.close()
+
+
+def test_scrub_secrets_drops_credentials_from_free_form_text() -> None:
+    proxy = scrub_secrets("Tunnel failed for http://Jawad:s3cr3t@proxy.local:8080")
+    assert "s3cr3t" not in proxy
+    assert proxy == "Tunnel failed for http://[redacted]@proxy.local:8080"
+
+    query = scrub_secrets(
+        "https://cdn.example.com/file.zip?token=abc123&size=10&api_key=zzz"
+    )
+    assert "abc123" not in query and "zzz" not in query
+    assert "size=10" in query
+
+    header = scrub_secrets("Authorization: Bearer eyJhbGciOi.eyJzdWIiOi rest")
+    assert "eyJhbGciOi" not in header
+    assert header.endswith("Bearer [redacted] rest")
+
+    # Servers echo the parameter back in prose, not only inside a query string.
+    prose = scrub_secrets("server rejected the request, token=SEKRIT9 (http 401)")
+    assert "SEKRIT9" not in prose
+    assert "http 401" in prose
+
+
+def test_scrub_secrets_keeps_ordinary_text_and_empty_input() -> None:
+    plain = "Remote end closed the connection at 14:02 (size=4096, retry in 5s)"
+    assert scrub_secrets(plain) == plain
+    assert scrub_secrets("") == ""
+
+
+def test_secret_redaction_filter_rewrites_the_record_it_accepts() -> None:
+    record = logging.LogRecord(
+        "idm.engine.worker",
+        logging.ERROR,
+        "worker.py",
+        12,
+        "proxy %s refused: %s",
+        ("http://Jawad:s3cr3t@p.local", "token=SEKRIT"),
+        None,
+    )
+    assert SecretRedactionFilter().filter(record) is True
+    message = record.getMessage()
+    assert "s3cr3t" not in message
+    assert "SEKRIT" not in message
+    assert "p.local" in message
+
+
+def test_unformattable_record_is_still_logged() -> None:
+    record = logging.LogRecord(
+        "idm", logging.ERROR, "x.py", 1, "one placeholder: %s", ("a", "b"), None
+    )
+    with pytest.raises(TypeError):
+        record.getMessage()
+    assert SecretRedactionFilter().filter(record) is True
+
+
+def test_worker_error_text_is_scrubbed_before_reaching_the_list() -> None:
+    failure = _clean_error(ValueError("cannot reach ftp://user:pw@files.example.com"))
+    assert "pw@" not in failure
+    assert "files.example.com" in failure
+
+    assert _clean_error(RuntimeError("  ")) == "RuntimeError"

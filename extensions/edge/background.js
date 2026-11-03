@@ -1,7 +1,25 @@
 "use strict";
 
 const HOST_NAME = "com.idm.native";
-const BROWSER = "edge";
+/* The native host compares this against the process that launched it and
+   rejects a request that claims the wrong browser, so a Chromium browser that
+   shares this folder must report its own name.  Edge is the fallback. */
+function detectBrowser() {
+  try {
+    const agent = String(self.navigator && self.navigator.userAgent);
+    if (/\bOPR\/|\bOpera\b/.test(agent)) return "opera";
+    // Brave mimics Chrome's user agent, so it is recognised by the API it
+    // injects instead.
+    const brave = self.navigator && self.navigator.brave;
+    if (brave && typeof brave.isBrave === "function") return "brave";
+    if (/\bEdg\//.test(agent)) return "edge";
+  } catch {
+    // Fall through to the browser this folder was written for.
+  }
+  return "edge";
+}
+
+const BROWSER = detectBrowser();
 const MENU_ID = "idm-download-link";
 const MENU_TITLE = "Download with IDM";
 const MENU_TO_ID = "idm-download-link-to";

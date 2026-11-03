@@ -30,11 +30,12 @@ PROTOCOL_VERSION = 2
 # are capped at the same value so a compromised page cannot exhaust memory.
 MAX_MESSAGE_BYTES = 1024 * 1024
 
-SUPPORTED_BROWSERS = ("chrome", "edge", "firefox")
+SUPPORTED_BROWSERS = ("chrome", "edge", "firefox", "brave", "opera")
 REQUEST_TYPES = {
     "hello",
     "status",
     "request_download",
+    "capture_page_links",
     "open_idm",
     "open_settings",
     "list_downloads",
@@ -52,6 +53,9 @@ MAX_TOTAL_BYTES = 10**15
 MAX_PAGE_TITLE_LENGTH = 512
 MAX_QUALITY_LABEL_LENGTH = 64
 MAX_DURATION_SECONDS = 7 * 24 * 60 * 60
+# A page capture request must stay small enough to fit one native messaging
+# frame and must not turn IDM into an unattended site crawler.
+MAX_CAPTURE_LINKS = 100
 MEDIA_KINDS = frozenset({"", "video", "audio"})
 DETECTION_SOURCES = frozenset({"", "link", "media", "browser", "manual"})
 
@@ -388,10 +392,68 @@ def normalize_download_request(message: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def normalize_capture_request(message: dict[str, Any]) -> dict[str, Any]:
+    """Return a validated page-link capture request.
+
+    A page is full of ``mailto:``, ``javascript:`` and bare fragment links, so an
+    unusable entry is dropped rather than failing the whole capture.  A capture
+    that yields nothing usable, or one that tries to hand IDM thousands of links
+    at once, is refused outright.
+    """
+    if not isinstance(message, dict):
+        raise ValidationError("The request must be an object.")
+    if message.get("type") != "capture_page_links":
+        raise ValidationError("Unexpected message type.", "unsupported_type")
+
+    raw = message.get("links")
+    if not isinstance(raw, list) or not raw:
+        raise ValidationError(
+            "The page did not provide any links to capture.", "no_links"
+        )
+    if len(raw) > MAX_CAPTURE_LINKS:
+        raise ValidationError(
+            f"A page capture may contain at most {MAX_CAPTURE_LINKS} links.",
+            "too_many_links",
+        )
+
+    links: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for entry in raw:
+        value = entry.get("url") if isinstance(entry, dict) else entry
+        try:
+            url = validate_http_url(value, "link")
+        except ValidationError:
+            continue
+        if url in seen:
+            continue
+        seen.add(url)
+        filename = ""
+        if isinstance(entry, dict):
+            try:
+                filename = validate_filename(entry.get("filename"))
+            except ValidationError:
+                filename = ""
+        links.append({"url": url, "filename": filename})
+    if not links:
+        raise ValidationError(
+            "None of the captured links can be downloaded.", "no_capturable_links"
+        )
+
+    return {
+        "type": "capture_page_links",
+        "request_id": require_request_id(message),
+        "browser": require_browser(message),
+        "extension_id": require_extension_id(message),
+        "client_version": _text(message.get("client_version", ""), 32),
+        "page_url": validate_referrer(message.get("page_url")),
+        "page_title": validate_page_title(message.get("page_title")),
+        "links": links,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Duplicate protection
 # ---------------------------------------------------------------------------
-
 
 class DuplicateTracker:
     """Bounded, time-limited cache of accepted request IDs.
@@ -461,6 +523,7 @@ def response_error(
 
 __all__ = [
     "DuplicateTracker",
+    "MAX_CAPTURE_LINKS",
     "MAX_DURATION_SECONDS",
     "MAX_FILENAME_LENGTH",
     "MAX_MESSAGE_BYTES",
@@ -477,6 +540,7 @@ __all__ = [
     "decode_line",
     "encode_line",
     "encode_message",
+    "normalize_capture_request",
     "normalize_download_request",
     "read_message",
     "require_browser",

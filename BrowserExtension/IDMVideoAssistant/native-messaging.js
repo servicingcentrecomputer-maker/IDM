@@ -10,10 +10,16 @@
   const HOST_NAME = "com.idm.native";
   const PROTOCOL_VERSION = 2;
   const MAX_FILENAME = 200;
+  const MAX_CAPTURE_LINKS = 100;
 
   function browserName() {
     try {
       const agent = String(global.navigator && global.navigator.userAgent);
+      if (/\bOPR\/|\bOpera\b/.test(agent)) return "opera";
+      // Brave mimics Chrome's user agent, so it is recognised by the API it
+      // injects instead.  Edge is matched by its own token.
+      const brave = global.navigator && global.navigator.brave;
+      if (brave && typeof brave.isBrave === "function") return "brave";
       if (/\bEdg\//.test(agent)) return "edge";
     } catch {
       // Fall through to Chrome, which shares the same extension format.
@@ -126,6 +132,34 @@
     return payload;
   }
 
+  function buildCaptureRequest(report, options) {
+    const opts = options || {};
+    const page = (report && report.page) || {};
+    const found = Array.isArray(report && report.links) ? report.links : [];
+    const links = [];
+    const seen = new Set();
+    for (const entry of found) {
+      const url = String((entry && entry.url) || "");
+      if (!isHttpUrl(url) || seen.has(url)) continue;
+      seen.add(url);
+      links.push({ url: url, filename: safeFilename(entry.filename) });
+      if (links.length >= MAX_CAPTURE_LINKS) break;
+    }
+    if (!links.length) {
+      throw new Error("The page did not provide any downloadable links.");
+    }
+    return {
+      type: "capture_page_links",
+      request_id: opts.requestId || createRequestId(),
+      browser: BROWSER,
+      extension_id: chrome.runtime.id,
+      client_version: clientVersion(),
+      page_url: isHttpUrl(page.url) ? page.url : "",
+      page_title: shortText(page.title, 180),
+      links: links,
+    };
+  }
+
   function sendNative(message) {
     const payload = Object.assign(
       {
@@ -198,7 +232,9 @@
   const api = {
     BROWSER,
     HOST_NAME,
+    MAX_CAPTURE_LINKS,
     PROTOCOL_VERSION,
+    buildCaptureRequest,
     buildDownloadRequest,
     clientVersion,
     createRequestId,

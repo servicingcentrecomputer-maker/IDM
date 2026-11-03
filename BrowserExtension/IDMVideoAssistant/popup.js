@@ -25,6 +25,7 @@ const el = {
   mediaHeading: document.getElementById("media-heading"),
   pageDomain: document.getElementById("page-domain"),
   refreshMedia: document.getElementById("refresh-media"),
+  captureLinks: document.getElementById("capture-links"),
   restrictedBox: document.getElementById("restricted-box"),
   restrictedTitle: document.getElementById("restricted-title"),
   restrictedText: document.getElementById("restricted-text"),
@@ -87,6 +88,7 @@ document.addEventListener("DOMContentLoaded", () => {
 function bindActions() {
   el.test.addEventListener("click", () => void testConnection());
   el.refreshMedia.addEventListener("click", () => void rescan(true));
+  el.captureLinks.addEventListener("click", () => void capturePageLinks());
   el.openOfficial.addEventListener("click", () => void openOfficialPage());
   el.saveTypes.addEventListener("click", () => void saveFileTypes());
   el.fileTypes.addEventListener("input", () => {
@@ -507,6 +509,40 @@ async function rescan(announce) {
     }
   } finally {
     el.refreshMedia.disabled = false;
+  }
+}
+
+async function capturePageLinks() {
+  if (!tab || !Number.isInteger(tab.id)) {
+    showNotice("There is no page to capture links from.", "error", 6000);
+    return;
+  }
+  el.captureLinks.disabled = true;
+  el.captureLinks.textContent = "Capturing…";
+  try {
+    const response = await send({
+      type: "idm:capturePage",
+      tabId: tab.id,
+    });
+    if (response && response.ok) {
+      showNotice(
+        response.added +
+          " link" +
+          (response.added === 1 ? "" : "s") +
+          " added to IDM." +
+          (response.skipped ? " " + response.skipped + " already downloading." : "") +
+          (response.rejected ? " " + response.rejected + " could not be queued." : ""),
+        "success",
+        8000
+      );
+      void refresh({ quiet: true });
+      return;
+    }
+    if (response && response.cancelled) return;
+    showNotice(friendlyError(response), "error", 9000);
+  } finally {
+    el.captureLinks.disabled = false;
+    el.captureLinks.textContent = "Capture links";
   }
 }
 

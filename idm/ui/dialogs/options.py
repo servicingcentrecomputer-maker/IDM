@@ -6,13 +6,14 @@ from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from PySide6.QtCore import QRectF, Qt, Signal
+from PySide6.QtCore import QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QPainter, QPen
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QButtonGroup,
     QCheckBox,
     QComboBox,
+    QDialog,
     QFileDialog,
     QFrame,
     QGridLayout,
@@ -21,6 +22,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMessageBox,
+    QPushButton,
     QRadioButton,
     QScrollArea,
     QSpinBox,
@@ -44,8 +46,18 @@ from downloads.location_manager import (
 )
 
 from ...constants import MAX_SPEED_LIMIT_KBPS
+from ...core import network
+from ...core.bandwidth import (
+    MEASURE_WINDOW_SECONDS,
+    MIN_SPEED_LIMIT_PERCENT,
+    SPEED_LIMIT_FIXED,
+    SPEED_LIMIT_PERCENT,
+    SPEED_LIMIT_UNLIMITED,
+)
+from ...core.credentials import CredentialError
 from ...core.paths import default_download_dir
 from ...core.settings import AppSettings
+from ...core.url_utils import format_size
 from ...updater.schedule import parse_timestamp
 from ...updater.version_manager import current_version
 from .. import icons
@@ -60,6 +72,7 @@ from .common import (
 )
 from .categories import CategoryManagerDialog
 from .location_rule import LocationRuleDialog
+from .site_auth import SiteAuthDialog
 
 def _format_update_time(value: str) -> str:
     moment = parse_timestamp(value)
@@ -194,13 +207,29 @@ class OptionsDialog(BaseDialog):
         theme: ThemeManager,
         parent=None,
         initial_tab: int = 0,
+        capacity_reader=None,
+        measure_request=None,
     ) -> None:
         super().__init__(theme, parent)
         self._settings = settings
+        # The live link measurement lives in the engine, not in settings, so the
+        # dialog is handed readers instead of the manager itself.
+        self._capacity_reader = capacity_reader or (lambda: 0)
+        self._measure_request = measure_request or (lambda: False)
         self._values: dict | None = None
         self._check_requested = False
         self._original_theme = theme.mode
         self._preview_mode = theme.mode
+        self._site_auth: list[dict] = [
+            dict(entry) for entry in getattr(settings, "site_auth", [])
+        ]
+        self._original_site_auth = {
+            entry["host"]: dict(entry) for entry in self._site_auth
+        }
+        self._pending_site_passwords: dict[str, tuple[str, str]] = {}
+        self._removed_site_hosts: set[str] = set()
+        self._proxy_has_password = bool(network.proxy_password(settings))
+        self._proxy_password_removed = False
 
         self.setWindowTitle("IDM Options")
         self.setMinimumSize(700, 540)
@@ -287,6 +316,40 @@ class OptionsDialog(BaseDialog):
         layout.addWidget(self.restore_checkbox)
         layout.addSpacing(10)
 
+        layout.addWidget(make_label("SYSTEM INTEGRATION", "FieldLabel"))
+        self.startup_checkbox = QCheckBox(
+            "Start IDM automatically when I sign in to Windows"
+        )
+        self.startup_checkbox.setChecked(self._settings.start_with_windows)
+        self.startup_checkbox.setToolTip(
+            "Writes IDM's own value under HKCU\\Software\\Microsoft\\Windows"
+            "\\CurrentVersion\\Run for this user account only."
+        )
+        layout.addWidget(self.startup_checkbox)
+        self.tray_checkbox = QCheckBox(
+            "Show IDM in the notification area (system tray)"
+        )
+        self.tray_checkbox.setChecked(self._settings.tray_enabled)
+        self.tray_checkbox.setToolTip(
+            "Adds the tray icon with Open, Pause all, Resume all and Quit."
+        )
+        layout.addWidget(self.tray_checkbox)
+        self.tray_close_checkbox = QCheckBox(
+            "Hide IDM in the tray instead of closing it"
+        )
+        self.tray_close_checkbox.setChecked(self._settings.tray_on_close)
+        self.tray_close_checkbox.setEnabled(self._settings.tray_enabled)
+        self.tray_checkbox.toggled.connect(self.tray_close_checkbox.setEnabled)
+        layout.addWidget(self.tray_close_checkbox)
+        self.native_notify_checkbox = QCheckBox(
+            "Show a Windows notification when a download finishes or fails"
+        )
+        self.native_notify_checkbox.setChecked(self._settings.native_notifications)
+        self.native_notify_checkbox.setEnabled(self._settings.tray_enabled)
+        self.tray_checkbox.toggled.connect(self.native_notify_checkbox.setEnabled)
+        layout.addWidget(self.native_notify_checkbox)
+        layout.addSpacing(10)
+
         layout.addWidget(make_label("CONFIRMATIONS", "FieldLabel"))
         self.confirm_checkbox = QCheckBox(
             "Ask before removing downloads from the list"
@@ -343,27 +406,136 @@ class OptionsDialog(BaseDialog):
         layout.addWidget(hint)
         layout.addSpacing(10)
 
-        layout.addWidget(make_label("SPEED LIMIT", "FieldLabel"))
-        speed_row = QHBoxLayout()
-        speed_row.setSpacing(10)
-        speed_row.addWidget(make_label("Maximum download speed:"))
+        layout.addWidget(make_label("BANDWIDTH LIMIT", "FieldLabel"))
+        self.speed_unlimited = QRadioButton("No limit")
+        self.speed_fixed = QRadioButton("Fixed maximum:")
+        self.speed_percent = QRadioButton("Percentage of the measured link:")
+        self._speed_group = QButtonGroup(self)
+        layout.addWidget(self.speed_unlimited)
+
+        fixed_row = QHBoxLayout()
+        fixed_row.setSpacing(10)
+        fixed_row.addSpacing(24)
+        fixed_row.addWidget(self.speed_fixed)
         self.speed_spin = QSpinBox()
         self.speed_spin.setRange(0, MAX_SPEED_LIMIT_KBPS)
         self.speed_spin.setSingleStep(128)
         self.speed_spin.setValue(self._settings.speed_limit_kbps)
         self.speed_spin.setSpecialValueText("Unlimited")
         self.speed_spin.setSuffix(" KB/s")
-        speed_row.addWidget(self.speed_spin)
-        speed_row.addStretch(1)
-        layout.addLayout(speed_row)
+        fixed_row.addWidget(self.speed_spin)
+        fixed_row.addStretch(1)
+        layout.addLayout(fixed_row)
+
+        percent_row = QHBoxLayout()
+        percent_row.setSpacing(10)
+        percent_row.addSpacing(24)
+        percent_row.addWidget(self.speed_percent)
+        self.speed_percent_spin = QSpinBox()
+        self.speed_percent_spin.setRange(MIN_SPEED_LIMIT_PERCENT, 100)
+        self.speed_percent_spin.setSingleStep(5)
+        self.speed_percent_spin.setValue(self._settings.speed_limit_percent)
+        self.speed_percent_spin.setSuffix(" %")
+        self.speed_percent_spin.valueChanged.connect(self._refresh_capacity_label)
+        percent_row.addWidget(self.speed_percent_spin)
+        percent_row.addStretch(1)
+        layout.addLayout(percent_row)
+
+        for index, button in enumerate(
+            (self.speed_unlimited, self.speed_fixed, self.speed_percent)
+        ):
+            self._speed_group.addButton(button, index)
+
+        mode = getattr(self._settings, "speed_limit_mode", SPEED_LIMIT_UNLIMITED)
+        self.speed_unlimited.setChecked(mode == SPEED_LIMIT_UNLIMITED)
+        self.speed_fixed.setChecked(mode == SPEED_LIMIT_FIXED)
+        self.speed_percent.setChecked(mode == SPEED_LIMIT_PERCENT)
+        if not any(
+            button.isChecked()
+            for button in (
+                self.speed_unlimited,
+                self.speed_fixed,
+                self.speed_percent,
+            )
+        ):
+            self.speed_unlimited.setChecked(True)
+        self._speed_group.idToggled.connect(self._on_speed_mode_changed)
+
+        self.capacity_label = make_label("", "HintLabel")
+        self.capacity_label.setWordWrap(True)
+        layout.addWidget(self.capacity_label)
+
+        measure_row = QHBoxLayout()
+        measure_row.setSpacing(10)
+        measure_row.addSpacing(24)
+        self.measure_button = QPushButton("Measure the link now")
+        self.measure_button.setObjectName("SubtleButton")
+        self.measure_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.measure_button.clicked.connect(self._measure_capacity)
+        measure_row.addWidget(self.measure_button)
+        measure_row.addStretch(1)
+        layout.addLayout(measure_row)
+
         hint = make_label(
-            "Set 0 for unlimited bandwidth. The limit applies to all active downloads.",
+            "A percentage limit is taken from the speed IDM sees while downloads "
+            "run, so it drops on its own when the connection slows down. A "
+            "faster link stays hidden behind the limit, so use the button above "
+            "to measure it when you move to a quicker network. Nothing can be "
+            "measured while the link is idle: start a download first.",
             "HintLabel",
         )
         hint.setWordWrap(True)
         layout.addWidget(hint)
+        self._sync_speed_limit_inputs()
         layout.addStretch(1)
         return page
+
+    # ------------------------------------------------------------------ bandwidth
+    def _on_speed_mode_changed(self, _button_id: int, checked: bool) -> None:
+        if checked:
+            self._sync_speed_limit_inputs()
+
+    def _sync_speed_limit_inputs(self) -> None:
+        self.speed_spin.setEnabled(self.speed_fixed.isChecked())
+        self.speed_percent_spin.setEnabled(self.speed_percent.isChecked())
+        self.measure_button.setEnabled(self.speed_percent.isChecked())
+        self._refresh_capacity_label()
+
+    def _speed_limit_mode(self) -> str:
+        if self.speed_fixed.isChecked():
+            return SPEED_LIMIT_FIXED
+        if self.speed_percent.isChecked():
+            return SPEED_LIMIT_PERCENT
+        return SPEED_LIMIT_UNLIMITED
+
+    def _refresh_capacity_label(self) -> None:
+        kbps = max(0, int(self._capacity_reader() or 0))
+        if not kbps:
+            self.capacity_label.setText("Measured link: not measured yet.")
+            return
+        if self.speed_percent.isChecked():
+            limit = kbps * self.speed_percent_spin.value() // 100
+            self.capacity_label.setText(
+                f"Measured link: {format_size(kbps * 1024)}/s. "
+                f"{self.speed_percent_spin.value()} % of it is "
+                f"{format_size(limit * 1024)}/s."
+            )
+        else:
+            self.capacity_label.setText(
+                f"Measured link: {format_size(kbps * 1024)}/s."
+            )
+
+    def _measure_capacity(self) -> None:
+        if not self._measure_request():
+            self.capacity_label.setText(
+                "Nothing is downloading right now, so there is no traffic to "
+                "measure. Start a download and try again."
+            )
+            return
+        self.capacity_label.setText("Measuring the link for a few seconds…")
+        QTimer.singleShot(
+            int(MEASURE_WINDOW_SECONDS * 1000) + 500, self._refresh_capacity_label
+        )
 
     def _build_save_to_tab(self) -> QWidget:
         page = self._page()
@@ -650,8 +822,322 @@ class OptionsDialog(BaseDialog):
         note.setObjectName("HintLabel")
         note.setWordWrap(True)
         layout.addWidget(note)
+        layout.addSpacing(14)
+
+        layout.addWidget(make_label("PROXY SERVER", "FieldLabel"))
+        self.proxy_mode_combo = QComboBox()
+        self.proxy_mode_combo.addItem("Use the Windows proxy settings", "system")
+        self.proxy_mode_combo.addItem("Connect directly (no proxy)", "direct")
+        self.proxy_mode_combo.addItem("Use a manual HTTP proxy", "manual")
+        index = self.proxy_mode_combo.findData(
+            network.normalize_proxy_mode(getattr(self._settings, "proxy_mode", "system"))
+        )
+        self.proxy_mode_combo.setCurrentIndex(max(0, index))
+        layout.addWidget(self.proxy_mode_combo)
+
+        proxy_grid = QGridLayout()
+        proxy_grid.setHorizontalSpacing(10)
+        proxy_grid.setVerticalSpacing(7)
+        proxy_grid.addWidget(make_label("Host:"), 0, 0)
+        self.proxy_host_edit = QLineEdit(
+            str(getattr(self._settings, "proxy_host", "") or "")
+        )
+        self.proxy_host_edit.setPlaceholderText("proxy.example.com")
+        self.proxy_host_edit.setMinimumHeight(30)
+        proxy_grid.addWidget(self.proxy_host_edit, 0, 1)
+        proxy_grid.addWidget(make_label("Port:"), 0, 2)
+        self.proxy_port_spin = QSpinBox()
+        self.proxy_port_spin.setRange(1, 65535)
+        self.proxy_port_spin.setValue(
+            int(getattr(self._settings, "proxy_port", 8080) or 8080)
+        )
+        proxy_grid.addWidget(self.proxy_port_spin, 0, 3)
+        proxy_grid.addWidget(make_label("Bypass:"), 1, 0)
+        self.proxy_bypass_edit = QLineEdit(
+            str(getattr(self._settings, "proxy_bypass", "") or "")
+        )
+        self.proxy_bypass_edit.setPlaceholderText("localhost, 192.168.0.*, *.local")
+        self.proxy_bypass_edit.setMinimumHeight(30)
+        proxy_grid.addWidget(self.proxy_bypass_edit, 1, 1, 1, 3)
+        layout.addLayout(proxy_grid)
+
+        self.proxy_auth_check = QCheckBox("The proxy requires authentication")
+        self.proxy_auth_check.setChecked(
+            bool(getattr(self._settings, "proxy_use_auth", False))
+        )
+        layout.addWidget(self.proxy_auth_check)
+        proxy_auth_row = QHBoxLayout()
+        proxy_auth_row.setSpacing(8)
+        self.proxy_username_edit = QLineEdit(
+            str(getattr(self._settings, "proxy_username", "") or "")
+        )
+        self.proxy_username_edit.setPlaceholderText("User name")
+        self.proxy_username_edit.setMinimumHeight(30)
+        self.proxy_password_edit = QLineEdit()
+        self.proxy_password_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        self.proxy_password_edit.setMinimumHeight(30)
+        self.proxy_password_edit.setPlaceholderText(
+            "Saved password" if self._proxy_has_password else "Password"
+        )
+        self.proxy_forget_button = QPushButton("Forget")
+        self.proxy_forget_button.setObjectName("SubtleButton")
+        self.proxy_forget_button.setToolTip(
+            "Remove the password from Windows Credential Manager"
+        )
+        self.proxy_forget_button.clicked.connect(self._forget_proxy_password)
+        proxy_auth_row.addWidget(self.proxy_username_edit, 1)
+        proxy_auth_row.addWidget(self.proxy_password_edit, 1)
+        proxy_auth_row.addWidget(self.proxy_forget_button)
+        layout.addLayout(proxy_auth_row)
+        proxy_hint = make_label(
+            "Proxy passwords are stored in Windows Credential Manager, not in "
+            "the IDM database. The bypass list accepts hosts, domain suffixes "
+            "and * wildcards.",
+            "HintLabel",
+        )
+        proxy_hint.setWordWrap(True)
+        layout.addWidget(proxy_hint)
+        self.proxy_mode_combo.currentIndexChanged.connect(
+            self._update_proxy_controls
+        )
+        self.proxy_auth_check.toggled.connect(self._update_proxy_controls)
+        self._update_proxy_controls()
+        layout.addSpacing(14)
+
+        layout.addWidget(make_label("SERVER AUTHENTICATION", "FieldLabel"))
+        auth_hint = make_label(
+            "Automatically sign in to password-protected HTTP, HTTPS or FTP "
+            "servers. Passwords are kept in Windows Credential Manager.",
+            "HintLabel",
+        )
+        auth_hint.setWordWrap(True)
+        layout.addWidget(auth_hint)
+        self.site_auth_table = QTableWidget(0, 3)
+        self.site_auth_table.setHorizontalHeaderLabels(["Host", "User name", "Method"])
+        self.site_auth_table.horizontalHeader().setSectionResizeMode(
+            0, QHeaderView.ResizeMode.Stretch
+        )
+        self.site_auth_table.horizontalHeader().setSectionResizeMode(
+            1, QHeaderView.ResizeMode.Stretch
+        )
+        self.site_auth_table.horizontalHeader().setSectionResizeMode(
+            2, QHeaderView.ResizeMode.ResizeToContents
+        )
+        self.site_auth_table.verticalHeader().setVisible(False)
+        self.site_auth_table.setSelectionBehavior(
+            QAbstractItemView.SelectionBehavior.SelectRows
+        )
+        self.site_auth_table.setSelectionMode(
+            QAbstractItemView.SelectionMode.SingleSelection
+        )
+        self.site_auth_table.setEditTriggers(
+            QAbstractItemView.EditTrigger.NoEditTriggers
+        )
+        self.site_auth_table.setMinimumHeight(120)
+        self.site_auth_table.itemSelectionChanged.connect(
+            self._update_auth_buttons
+        )
+        self.site_auth_table.itemDoubleClicked.connect(
+            lambda _item: self._edit_site_auth()
+        )
+        layout.addWidget(self.site_auth_table)
+        auth_buttons = QHBoxLayout()
+        auth_buttons.setSpacing(8)
+        self.add_auth_button = QPushButton("Add…")
+        self.edit_auth_button = QPushButton("Edit…")
+        self.remove_auth_button = QPushButton("Remove")
+        self.remove_auth_button.setObjectName("DangerButton")
+        self.add_auth_button.clicked.connect(self._add_site_auth)
+        self.edit_auth_button.clicked.connect(self._edit_site_auth)
+        self.remove_auth_button.clicked.connect(self._remove_site_auth)
+        auth_buttons.addWidget(self.add_auth_button)
+        auth_buttons.addWidget(self.edit_auth_button)
+        auth_buttons.addWidget(self.remove_auth_button)
+        auth_buttons.addStretch(1)
+        layout.addLayout(auth_buttons)
+        self._refresh_site_auth_table()
+        layout.addSpacing(14)
+
+        layout.addWidget(make_label("TIMEOUTS", "FieldLabel"))
+        timeout_row = QHBoxLayout()
+        timeout_row.setSpacing(10)
+        timeout_row.addWidget(make_label("Connect timeout:"))
+        self.connect_timeout_spin = QSpinBox()
+        self.connect_timeout_spin.setRange(3, 120)
+        self.connect_timeout_spin.setSuffix(" s")
+        self.connect_timeout_spin.setValue(
+            int(getattr(self._settings, "connect_timeout", 15) or 15)
+        )
+        timeout_row.addWidget(self.connect_timeout_spin)
+        timeout_row.addSpacing(16)
+        timeout_row.addWidget(make_label("Read timeout:"))
+        self.read_timeout_spin = QSpinBox()
+        self.read_timeout_spin.setRange(3, 300)
+        self.read_timeout_spin.setSuffix(" s")
+        self.read_timeout_spin.setValue(
+            int(getattr(self._settings, "read_timeout", 30) or 30)
+        )
+        timeout_row.addWidget(self.read_timeout_spin)
+        timeout_row.addStretch(1)
+        layout.addLayout(timeout_row)
+        timeout_hint = make_label(
+            "A stalled connection is retried after the read timeout. Increase "
+            "both values on very slow or high-latency links.",
+            "HintLabel",
+        )
+        timeout_hint.setWordWrap(True)
+        layout.addWidget(timeout_hint)
         layout.addStretch(1)
         return page
+
+    # ------------------------------------------------------------------ proxy/auth
+    def _forget_proxy_password(self) -> None:
+        self._proxy_password_removed = True
+        self._proxy_has_password = False
+        self.proxy_password_edit.clear()
+        self.proxy_password_edit.setPlaceholderText("No password saved")
+        self._update_proxy_controls()
+
+    def _update_proxy_controls(self) -> None:
+        manual = self.proxy_mode_combo.currentData() == "manual"
+        use_auth = manual and self.proxy_auth_check.isChecked()
+        for widget in (
+            self.proxy_host_edit,
+            self.proxy_port_spin,
+            self.proxy_bypass_edit,
+            self.proxy_auth_check,
+        ):
+            widget.setEnabled(manual)
+        for widget in (
+            self.proxy_username_edit,
+            self.proxy_password_edit,
+            self.proxy_forget_button,
+        ):
+            widget.setEnabled(use_auth)
+
+    def _refresh_site_auth_table(self) -> None:
+        table = self.site_auth_table
+        table.blockSignals(True)
+        table.setRowCount(0)
+        for entry in self._site_auth:
+            row = table.rowCount()
+            table.insertRow(row)
+            host_item = QTableWidgetItem(entry["host"])
+            host_item.setData(Qt.ItemDataRole.UserRole, entry["host"])
+            table.setItem(row, 0, host_item)
+            table.setItem(row, 1, QTableWidgetItem(entry["username"]))
+            table.setItem(
+                row,
+                2,
+                QTableWidgetItem("Digest" if entry["scheme"] == "digest" else "Basic"),
+            )
+        table.blockSignals(False)
+        self._update_auth_buttons()
+
+    def _selected_site_auth(self) -> dict | None:
+        rows = self.site_auth_table.selectionModel().selectedRows()
+        if not rows:
+            return None
+        host = self.site_auth_table.item(rows[0].row(), 0).data(
+            Qt.ItemDataRole.UserRole
+        )
+        return next(
+            (entry for entry in self._site_auth if entry["host"] == host), None
+        )
+
+    def _update_auth_buttons(self) -> None:
+        selected = self._selected_site_auth() is not None
+        self.edit_auth_button.setEnabled(selected)
+        self.remove_auth_button.setEnabled(selected)
+
+    def _add_site_auth(self) -> None:
+        dialog = SiteAuthDialog(self._theme, parent=self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        host, username, scheme, password = dialog.values()
+        self._pending_site_passwords[host] = (username, password)
+        self._site_auth = [
+            entry for entry in self._site_auth if entry["host"] != host
+        ]
+        self._site_auth.append(
+            {"host": host, "username": username, "scheme": scheme}
+        )
+        self._site_auth.sort(key=lambda entry: entry["host"])
+        self._refresh_site_auth_table()
+
+    def _edit_site_auth(self) -> None:
+        entry = self._selected_site_auth()
+        if entry is None:
+            return
+        has_password = entry["host"] in self._pending_site_passwords or (
+            network.has_site_password(entry["host"])
+            and entry["host"] not in self._removed_site_hosts
+        )
+        dialog = SiteAuthDialog(
+            self._theme, entry=entry, has_password=has_password, parent=self
+        )
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        host, username, scheme, password = dialog.values()
+        old_host = entry["host"]
+        if host != old_host:
+            self._removed_site_hosts.add(old_host)
+            self._pending_site_passwords.pop(old_host, None)
+            if not password and not network.has_site_password(host):
+                self._show_error(
+                    "Enter the password again when the host changes."
+                )
+                return
+        if password:
+            self._pending_site_passwords[host] = (username, password)
+        elif username != entry["username"]:
+            self._show_error("Enter the password again when the user name changes.")
+            return
+        self._site_auth = [
+            item for item in self._site_auth if item["host"] != old_host
+        ]
+        self._site_auth.append(
+            {"host": host, "username": username, "scheme": scheme}
+        )
+        self._site_auth.sort(key=lambda item: item["host"])
+        self._refresh_site_auth_table()
+
+    def _remove_site_auth(self) -> None:
+        entry = self._selected_site_auth()
+        if entry is None:
+            return
+        self._site_auth = [
+            item for item in self._site_auth if item["host"] != entry["host"]
+        ]
+        self._removed_site_hosts.add(entry["host"])
+        self._pending_site_passwords.pop(entry["host"], None)
+        self._refresh_site_auth_table()
+
+    def _apply_site_credentials(self) -> None:
+        for host, (username, password) in self._pending_site_passwords.items():
+            network.set_site_password(host, username, password)
+        for host in self._removed_site_hosts:
+            if host in self._original_site_auth:
+                network.clear_site_password(host)
+        if self._proxy_password_removed:
+            network.clear_proxy_password()
+            self._proxy_has_password = False
+        if self.proxy_password_edit.text() and self.proxy_auth_check.isChecked():
+            network.set_proxy_password(
+                self.proxy_username_edit.text().strip(),
+                self.proxy_password_edit.text(),
+            )
+            self._proxy_has_password = True
+        self.proxy_password_edit.clear()
+        self._pending_site_passwords.clear()
+        self._removed_site_hosts.clear()
+        self._original_site_auth = {
+            entry["host"]: dict(entry) for entry in self._site_auth
+        }
+        self._proxy_password_removed = False
+        self.proxy_password_edit.setPlaceholderText(
+            "Saved password" if self._proxy_has_password else "Password"
+        )
 
     def _build_interface_tab(self) -> QWidget:
         page = self._page()
@@ -944,6 +1430,41 @@ class OptionsDialog(BaseDialog):
                 )
                 return
 
+        proxy_mode = str(self.proxy_mode_combo.currentData() or "system")
+        proxy_host = self.proxy_host_edit.text().strip()
+        proxy_use_auth = self.proxy_auth_check.isChecked()
+        if proxy_mode == "manual" and not network.valid_proxy_host(proxy_host):
+            self._show_error(
+                "Enter the proxy host name without http:// or a path."
+            )
+            return
+        if proxy_mode == "manual" and proxy_use_auth:
+            if not self.proxy_username_edit.text().strip():
+                self._show_error("Enter the user name for the proxy.")
+                return
+            stored = self._proxy_has_password and not self._proxy_password_removed
+            if not self.proxy_password_edit.text() and not stored:
+                self._show_error("Enter the password for the proxy.")
+                return
+
+        site_auth = network.normalize_site_auth(self._site_auth)
+        for entry in site_auth:
+            host = entry["host"]
+            if host in self._pending_site_passwords:
+                continue
+            if network.has_site_password(host):
+                continue
+            self._show_error(
+                f"Enter the password for {host} before saving."
+            )
+            return
+
+        try:
+            self._apply_site_credentials()
+        except CredentialError as exc:
+            self._show_error(str(exc))
+            return
+
         self._values = {
             "theme": self._preview_mode,
             "download_dir": folder,
@@ -952,10 +1473,25 @@ class OptionsDialog(BaseDialog):
             "auto_retry": self.retry_checkbox.isChecked(),
             "max_retries": self.retry_spin.value(),
             "speed_limit_kbps": self.speed_spin.value(),
+            "speed_limit_mode": self._speed_limit_mode(),
+            "speed_limit_percent": self.speed_percent_spin.value(),
+            "proxy_mode": proxy_mode,
+            "proxy_host": proxy_host,
+            "proxy_port": self.proxy_port_spin.value(),
+            "proxy_username": self.proxy_username_edit.text().strip(),
+            "proxy_use_auth": proxy_use_auth,
+            "proxy_bypass": self.proxy_bypass_edit.text().strip(),
+            "site_auth": site_auth,
+            "connect_timeout": self.connect_timeout_spin.value(),
+            "read_timeout": self.read_timeout_spin.value(),
             "confirm_delete": self.confirm_checkbox.isChecked(),
             "show_completion_dialog": self.completion_checkbox.isChecked(),
             "start_immediately": self.start_checkbox.isChecked(),
             "restore_session": self.restore_checkbox.isChecked(),
+            "start_with_windows": self.startup_checkbox.isChecked(),
+            "tray_enabled": self.tray_checkbox.isChecked(),
+            "tray_on_close": self.tray_close_checkbox.isChecked(),
+            "native_notifications": self.native_notify_checkbox.isChecked(),
             "show_toolbar": self.toolbar_check.isChecked(),
             "show_sidebar": self.sidebar_check.isChecked(),
             "show_download_list": self.list_check.isChecked(),

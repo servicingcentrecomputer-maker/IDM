@@ -163,11 +163,11 @@ def test_invalid_inputs_keep_the_dialog_open(qt_app, settings, theme) -> None:
     dialog = AddDownloadDialog(settings, theme)
     dialog.show()
     try:
-        dialog.url_edit.setText("ftp://example.com/file.zip")
-        dialog.filename_edit.setText("file.zip")
+        dialog.url_edit.setText("file:///C:/Windows/win.ini")
+        dialog.filename_edit.setText("win.ini")
         dialog._validate_and_accept(True)
         assert dialog.result() != QDialog.DialogCode.Accepted
-        assert "HTTP and HTTPS" in dialog.error_label.text()
+        assert "HTTP, HTTPS, FTP and FTPS" in dialog.error_label.text()
 
         dialog.url_edit.setText("https://example.com/file.zip")
         dialog.filename_edit.setText("")

@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 from PySide6.QtCore import QDateTime
-from PySide6.QtWidgets import QDialog
+from PySide6.QtWidgets import QDialog, QInputDialog
 
 from idm.constants import custom_category_key
 from idm.core.scheduler import SCHEDULE_ACTIONS
@@ -28,6 +28,7 @@ from idm.ui.dialogs.about import AboutDialog
 from idm.ui.dialogs.add_download import AddDownloadDialog
 from idm.ui.dialogs.complete import DownloadCompleteDialog
 from idm.ui.dialogs.options import OptionsDialog
+from idm.version import APP_DESCRIPTION, APP_NAME, APP_VERSION
 from idm.ui.dialogs.progress import DownloadProgressDialog
 from idm.ui.dialogs.queue import QueueDialog
 from idm.ui.dialogs.scheduler import SchedulerDialog
@@ -77,7 +78,7 @@ def window(qt_app, isolated_settings):
 
 def test_main_window_shell_and_theme_toggle(qt_app, window):
     assert window.isVisible()
-    assert window.windowTitle() == "IDM 3.6.2 – Internet Download Manager"
+    assert window.windowTitle() == f"{APP_NAME} {APP_VERSION} – {APP_DESCRIPTION}"
     assert set(window._toolbar.buttons) == {
         "add",
         "resume",
@@ -324,8 +325,8 @@ def test_add_dialog_probe_and_validation(qt_app, server, window, tmp_path):
 
     invalid = AddDownloadDialog(window._settings, window._theme, window)
     invalid.show()
-    invalid.url_edit.setText("ftp://example.com/file.zip")
-    invalid.filename_edit.setText("file.zip")
+    invalid.url_edit.setText("file:///C:/Windows/win.ini")
+    invalid.filename_edit.setText("win.ini")
     invalid.folder_edit.setText(str(folder))
     invalid._validate_and_accept(True)
     qt_app.processEvents()
@@ -851,3 +852,209 @@ def test_narrow_table_hides_low_priority_columns(qt_app, window, tmp_path):
     window.resize(1280, 720)
     qt_app.processEvents()
     assert not table.isColumnHidden(COLUMN_DATE_ADDED)
+
+
+def test_file_tool_actions_exist_and_start_disabled(qt_app, window):
+    for key in ("batch_add", "rename", "refresh_link", "verify_checksum"):
+        assert key in window._actions
+    window._download_view.table.clearSelection()
+    window._update_actions()
+    assert window._actions["rename"].isEnabled() is False
+    assert window._actions["refresh_link"].isEnabled() is False
+    assert window._actions["verify_checksum"].isEnabled() is False
+    assert window._actions["batch_add"].isEnabled() is True
+
+
+def test_rename_from_the_ui_updates_the_item_and_the_table(
+    qt_app, window, server, tmp_path, monkeypatch
+):
+    from idm.ui.dialogs.download_file_info import AddDownloadDialog  # noqa: F401
+
+    folder = tmp_path / "renamed"
+    item = window._manager.add_download(
+        server.url("/file/4096"), "ui-before.bin", str(folder)
+    )
+    assert wait_until(
+        qt_app, lambda: item.status == DownloadStatus.COMPLETED, 20
+    ), item.error
+
+    monkeypatch.setattr(
+        QInputDialog, "getText", lambda *args, **kwargs: ("ui-after.bin", True)
+    )
+    window._rename_item(item)
+
+    assert item.filename == "ui-after.bin"
+    assert (folder / "ui-after.bin").is_file()
+    assert not (folder / "ui-before.bin").exists()
+    assert "ui-after.bin" in str(
+        window._model.data(
+            window._model.index(window._model.row_for_id(item.id), COLUMN_NAME),
+            COLUMN_NAME,
+        )
+    )
+
+
+def test_batch_urls_dialog_deduplicates_and_reports_the_count(qt_app, window) -> None:
+    from idm.ui.dialogs.batch_urls import BatchUrlsDialog, parse_url_lines
+
+    text = (
+        "https://example.com/a.zip\n"
+        "  https://example.com/b.zip  \n"
+        "https://example.com/a.zip\n"
+        "\n   \n"
+        "# a comment line\n"
+        "https://example.com/c.zip\n"
+    )
+    assert parse_url_lines(text) == [
+        "https://example.com/a.zip",
+        "https://example.com/b.zip",
+        "https://example.com/c.zip",
+    ]
+
+    dialog = BatchUrlsDialog(window._settings, window._theme)
+    dialog.show()
+    dialog.urls_edit.setPlainText(text)
+    qt_app.processEvents()
+    assert dialog.add_button.isEnabled()
+    assert "3 links" in dialog.count_label.text()
+    assert dialog.values()["folder"] == window._settings.download_dir
+
+    dialog.urls_edit.setPlainText("")
+    assert dialog.add_button.isEnabled() is False
+    dialog.deleteLater()
+
+
+def test_batch_add_queues_valid_links_and_skips_the_rest(
+    qt_app, window, server, tmp_path, monkeypatch
+):
+    from idm.ui.dialogs.batch_urls import BatchUrlsDialog
+
+    folder = tmp_path / "batch"
+    window._manager.add_download(
+        server.url("/file/1024"), "duplicate.bin", str(folder), start_immediately=False
+    )
+    duplicate_url = server.url("/file/1024")
+
+    monkeypatch.setattr(
+        BatchUrlsDialog, "exec", lambda self: QDialog.DialogCode.Accepted
+    )
+    monkeypatch.setattr(
+        BatchUrlsDialog,
+        "values",
+        lambda self: {
+            "urls": [server.url("/file/2048"), "not a url", duplicate_url],
+            "folder": str(folder),
+            "start_immediately": False,
+        },
+    )
+    window._add_batch_downloads()
+
+    urls = [item.url for item in window._manager.items() if item.folder == str(folder)]
+    assert urls.count(server.url("/file/2048")) == 1
+
+
+def test_add_dialog_passes_the_expected_digest(qt_app, window, server, tmp_path) -> None:
+    from idm.ui.dialogs.download_file_info import AddDownloadDialog
+
+    digest = "a" * 64
+    created: dict = {}
+
+    def submit(values):
+        created.update(values)
+
+    dialog = AddDownloadDialog(
+        window._settings, window._theme, window, submit_callback=submit
+    )
+    dialog.show()
+    dialog.folder_edit.setText(str(tmp_path / "verified"))
+    dialog.url_edit.setText(server.url("/file/1024"))
+    assert wait_until(qt_app, lambda: dialog.probe_label.property("state") == "ok", 10)
+    dialog.checksum_edit.setText("short")
+    dialog._validate_and_accept(True)
+    qt_app.processEvents()
+    assert dialog.result() != QDialog.DialogCode.Accepted
+    assert "hexadecimal" in dialog.error_label.text()
+
+    dialog.checksum_edit.setText(digest.upper())
+    dialog._validate_and_accept(True)
+    qt_app.processEvents()
+    assert dialog.result() == QDialog.DialogCode.Accepted
+    assert created["expected_sha256"] == digest
+    dialog.deleteLater()
+
+
+def test_delete_completed_asks_before_clearing_the_list(
+    qt_app, server, window, tmp_path, monkeypatch
+):
+    """Clearing completed entries is destructive history, so it needs a yes."""
+    done = window._manager.add_download(
+        server.url("/file/2048"), "already-finished.bin", str(tmp_path)
+    )
+    assert wait_until(
+        qt_app, lambda: done.status == DownloadStatus.COMPLETED, 15
+    )
+
+    asked: list[int] = []
+
+    def refuse(count: int) -> bool:
+        asked.append(count)
+        return False
+
+    monkeypatch.setattr(window, "_ask_clear_completed", refuse)
+    window._delete_completed()
+    qt_app.processEvents()
+
+    assert asked == [1]
+    assert done.id in [item.id for item in window._manager.items()]
+
+    accepted: list[int] = []
+
+    def accept(count: int) -> bool:
+        accepted.append(count)
+        return True
+
+    monkeypatch.setattr(window, "_ask_clear_completed", accept)
+    window._delete_completed()
+    qt_app.processEvents()
+
+    assert accepted == [1]
+    assert done.id not in [item.id for item in window._manager.items()]
+    assert "Cleared 1 completed download" in window._status_bar._message.text()
+
+
+def test_delete_completed_without_completed_entries_does_not_ask(
+    qt_app, window, monkeypatch
+):
+    asked: list[int] = []
+    monkeypatch.setattr(
+        window, "_ask_clear_completed", lambda count: asked.append(count) or True
+    )
+    window._delete_completed()
+    qt_app.processEvents()
+
+    assert asked == []
+    assert window._status_bar._message.text() == (
+        "There are no completed downloads to clear."
+    )
+
+
+def test_delete_completed_skips_the_prompt_when_confirm_is_off(
+    qt_app, server, window, tmp_path, monkeypatch
+):
+    window._settings.confirm_delete = False
+    monkeypatch.setattr(
+        window,
+        "_ask_clear_completed",
+        lambda count: (_ for _ in ()).throw(AssertionError("must not ask")),
+    )
+    done = window._manager.add_download(
+        server.url("/file/2048"), "no-prompt.bin", str(tmp_path)
+    )
+    assert wait_until(
+        qt_app, lambda: done.status == DownloadStatus.COMPLETED, 15
+    )
+
+    window._delete_completed()
+    qt_app.processEvents()
+
+    assert done.id not in [item.id for item in window._manager.items()]

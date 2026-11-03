@@ -48,6 +48,7 @@ _LIBRARY_ITEMS = (
     ("programs", "Programs", "app"),
     ("compressed", "Compressed Files", "archive"),
     ("images", "Images", "image"),
+    ("general", "General", "file"),
     ("other", "Other Files", "file"),
 )
 

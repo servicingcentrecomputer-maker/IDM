@@ -1,6 +1,6 @@
 # IDM UI Design System
 
-Version 3.6.2 ships one design system shared by the classic and modern IDM
+Version 3.6.3 ships one design system shared by the classic and modern IDM
 surfaces. The system has two layers:
 
 1. **Design tokens** — framework-light values in `idm/ui/design.py`, consumed
@@ -14,7 +14,8 @@ reduced-motion settings stay consistent without per-widget special cases.
 
 ## Identity
 
-The 3.6.2 identity is deep navy and azure in the modern themes and crisp blue
+The 3.6.3 identity is unchanged from 3.6.2: deep navy and azure in the modern
+themes and crisp blue
 on light gray in Classic. The mark is an original squircle
 with an azure gradient, a light ring and a white download glyph; it is used at
 every size from 16 px window icons to the installer wizard. Toolbar and
@@ -179,6 +180,8 @@ Shadows are suppressed when motion or animation effects are disabled.
 | Download Complete window | Non-modal 540 px card: 52 px success badge, title, file name, destination line, a two-column details card (average speed, completed, size, source host), a hint, then Open Folder, Close and the single primary Open File, with a persisted completion-window checkbox above the footer. Values come from the finished `DownloadItem`; missing paths disable Open File. |
 | Sidebar rows | 38 px rhythm, painted icon tile, label and right-aligned count pill; a 3 px accent bar marks the active destination. Custom categories use the same row and participate in counts, filtering and selection. |
 | Status bar | 30 px bar: activity dot, active/queued counts, live transfer rate, total downloaded data, transient message and the version readout. |
+| Speed graph | Custom-painted panel in the Download Progress window: `sm` radius surface, dotted half and peak gridlines, an accent-to-transparent gradient under the curve, a 2 px accent polyline with an endpoint dot, and a dashed warning-coloured line for the binding limit. Current, peak and average sit in the corners in the label type scale. An empty history paints the surface and one faint explanation instead of an invented curve. |
+| Properties dialog | Card-based read-only view of one download — General, Transfer, Integrity, Source and Last error — using the same key/value typography as the table rows. Long values such as a URL or a SHA-256 have no breakable word, so value labels take a 1 px minimum width and an expanding policy and wrap instead of pushing the dialog wider than the screen. |
 
 ## Layout and responsiveness
 

@@ -712,6 +712,99 @@ function failure(code, message) {
   return { ok: false, error: { code: code, message: message } };
 }
 
+function collectPageLinks(tabId) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
+    const timer = setTimeout(() => finish(null), 3000);
+    try {
+      chrome.tabs.sendMessage(
+        tabId,
+        { type: "idm:collectLinks" },
+        { frameId: 0 },
+        (response) => {
+          clearTimeout(timer);
+          void chrome.runtime.lastError;
+          finish(response && typeof response === "object" ? response : null);
+        }
+      );
+    } catch {
+      clearTimeout(timer);
+      finish(null);
+    }
+  });
+}
+
+/**
+ * Offer every plain link on the page for a batch download.
+ *
+ * The page itself is never fetched again: the links are the ones already
+ * visible in the document, and IDM still asks the user to confirm the list.
+ */
+async function capturePageLinks(tabId) {
+  await ready;
+  if (!Number.isInteger(tabId) || tabId < 0) {
+    return failure("no_tab", "No page is available to capture.");
+  }
+  const report = await collectPageLinks(tabId);
+  if (!report) {
+    return failure(
+      "page_unreachable",
+      "This page cannot be read. Reload it and try again."
+    );
+  }
+  if (report.restricted) {
+    return failure(
+      "restricted_platform",
+      report.restricted.message ||
+        Detector.restrictionMessage(report.restricted.platform)
+    );
+  }
+  if (!Array.isArray(report.links) || !report.links.length) {
+    return failure("no_links", "This page does not offer any downloadable links.");
+  }
+
+  let payload;
+  try {
+    payload = Native.buildCaptureRequest(report, {});
+  } catch (error) {
+    return failure(
+      "invalid_links",
+      String(error && error.message ? error.message : error)
+    );
+  }
+
+  const response = await Native.sendNative(payload);
+  if (response.ok && response.type === "page_captured") {
+    forgetError();
+    setBadge("\u2713", "#1f9d55", 2500);
+    return {
+      ok: true,
+      requested: response.requested || payload.links.length,
+      added: response.added || 0,
+      skipped: response.skipped || 0,
+      rejected: response.rejected || 0,
+    };
+  }
+  if (Native.isCancelled(response)) {
+    return { ok: false, cancelled: true, error: { code: "cancelled", message: "Cancelled." } };
+  }
+  rememberError(response);
+  setBadge("!", "#c0392b", 4000);
+  return {
+    ok: false,
+    error:
+      (response && response.error) || {
+        code: "idm_rejected",
+        message: Native.describeFailure(response),
+      },
+  };
+}
+
 async function openPage(url) {
   if (!Native.isHttpUrl(url)) {
     return failure("invalid_url", "IDM can only open HTTP and HTTPS pages.");
@@ -807,6 +900,18 @@ callSafely(() =>
               "internal_error",
               String(error && error.message ? error.message : "IDM could not be reached.")
             )
+          )
+      );
+      return true;
+    }
+
+    if (type === "idm:capturePage") {
+      const tabId = Number.isInteger(message.tabId) ? message.tabId : null;
+      capturePageLinks(tabId).then(
+        sendResponse,
+        () =>
+          sendResponse(
+            failure("internal_error", "The page links could not be captured.")
           )
       );
       return true;

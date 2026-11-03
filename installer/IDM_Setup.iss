@@ -1,4 +1,4 @@
-; IDM 3.6.2 installer
+; IDM 3.6.3 installer
 ; Compile with Inno Setup 6.3+ or 7.x:
 ;   ISCC.exe installer\IDM_Setup.iss
 ;
@@ -23,8 +23,8 @@
 ; extension page or a store.
 
 #define MyAppName "IDM"
-#define MyAppVersion "3.6.2"
-#define MyAppVerName "IDM 3.6.2"
+#define MyAppVersion "3.6.3"
+#define MyAppVerName "IDM 3.6.3"
 #define MyAppPublisher "IDM"
 #define MyAppExeName "IDM.exe"
 #define NativeHostExeName "IDM_NativeHost.exe"
@@ -41,7 +41,7 @@ AppVersion={#MyAppVersion}
 AppVerName={#MyAppVerName}
 AppPublisher={#MyAppPublisher}
 AppCopyright=Copyright (C) 2026 IDM
-VersionInfoVersion=3.6.2.0
+VersionInfoVersion=3.6.3.0
 VersionInfoTextVersion={#MyAppVersion}
 VersionInfoCompany={#MyAppPublisher}
 VersionInfoDescription=IDM Setup
@@ -95,6 +95,8 @@ Name: "startup"; Description: "Start IDM automatically when Windows starts"; Gro
 Name: "chrome"; Description: "Integrate with Google Chrome"; GroupDescription: "Browser integration:"; Flags: checkedonce; Check: IsChromeInstalled
 Name: "edge"; Description: "Integrate with Microsoft Edge"; GroupDescription: "Browser integration:"; Flags: checkedonce; Check: IsEdgeInstalled
 Name: "firefox"; Description: "Integrate with Mozilla Firefox"; GroupDescription: "Browser integration:"; Flags: checkedonce; Check: IsFirefoxInstalled
+Name: "brave"; Description: "Integrate with Brave"; GroupDescription: "Browser integration:"; Flags: checkedonce; Check: IsBraveInstalled
+Name: "opera"; Description: "Integrate with Opera"; GroupDescription: "Browser integration:"; Flags: checkedonce; Check: IsOperaInstalled
 
 [Files]
 Source: "..\dist\IDM\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
@@ -122,6 +124,18 @@ Root: HKCU; Subkey: "Software\Mozilla\NativeMessagingHosts\{#NativeHostName}"; V
 Root: HKCU32; Subkey: "Software\Mozilla\NativeMessagingHosts\{#NativeHostName}"; ValueType: string; ValueName: ""; ValueData: "{app}\browser-integration\{#NativeHostName}.firefox.json"; Flags: uninsdeletevalue uninsdeletekeyifempty; Check: FirefoxTaskSelected
 #else
 Root: HKCU; Subkey: "Software\Mozilla\NativeMessagingHosts\{#NativeHostName}"; ValueType: string; ValueName: ""; ValueData: "{app}\browser-integration\{#NativeHostName}.firefox.json"; Flags: uninsdeletevalue uninsdeletekeyifempty 32bit; Check: FirefoxTaskSelected
+#endif
+Root: HKCU; Subkey: "Software\BraveSoftware\Brave-Browser\NativeMessagingHosts\{#NativeHostName}"; ValueType: string; ValueName: ""; ValueData: "{app}\browser-integration\{#NativeHostName}.brave.json"; Flags: uninsdeletevalue uninsdeletekeyifempty; Check: BraveTaskSelected
+#if PREPROCVER >= EncodeVer(7,0,0)
+Root: HKCU32; Subkey: "Software\BraveSoftware\Brave-Browser\NativeMessagingHosts\{#NativeHostName}"; ValueType: string; ValueName: ""; ValueData: "{app}\browser-integration\{#NativeHostName}.brave.json"; Flags: uninsdeletevalue uninsdeletekeyifempty; Check: BraveTaskSelected
+#else
+Root: HKCU; Subkey: "Software\BraveSoftware\Brave-Browser\NativeMessagingHosts\{#NativeHostName}"; ValueType: string; ValueName: ""; ValueData: "{app}\browser-integration\{#NativeHostName}.brave.json"; Flags: uninsdeletevalue uninsdeletekeyifempty 32bit; Check: BraveTaskSelected
+#endif
+Root: HKCU; Subkey: "Software\Opera Software\Opera Stable\NativeMessagingHosts\{#NativeHostName}"; ValueType: string; ValueName: ""; ValueData: "{app}\browser-integration\{#NativeHostName}.opera.json"; Flags: uninsdeletevalue uninsdeletekeyifempty; Check: OperaTaskSelected
+#if PREPROCVER >= EncodeVer(7,0,0)
+Root: HKCU32; Subkey: "Software\Opera Software\Opera Stable\NativeMessagingHosts\{#NativeHostName}"; ValueType: string; ValueName: ""; ValueData: "{app}\browser-integration\{#NativeHostName}.opera.json"; Flags: uninsdeletevalue uninsdeletekeyifempty; Check: OperaTaskSelected
+#else
+Root: HKCU; Subkey: "Software\Opera Software\Opera Stable\NativeMessagingHosts\{#NativeHostName}"; ValueType: string; ValueName: ""; ValueData: "{app}\browser-integration\{#NativeHostName}.opera.json"; Flags: uninsdeletevalue uninsdeletekeyifempty 32bit; Check: OperaTaskSelected
 #endif
 
 [Icons]
@@ -171,12 +185,45 @@ begin
   Result := WizardIsTaskSelected('firefox');
 end;
 
+function IsBraveInstalled(): Boolean;
+begin
+  Result :=
+    FileExists(ExpandConstant('{pf}\BraveSoftware\Brave-Browser\Application\brave.exe')) or
+    FileExists(ExpandConstant('{pf32}\BraveSoftware\Brave-Browser\Application\brave.exe')) or
+    FileExists(ExpandConstant('{localappdata}\BraveSoftware\Brave-Browser\Application\brave.exe'));
+end;
+
+{ Opera's mainline browser lives under "Programs\Opera" for a per-user install
+  and under "Opera\Opera" for the older system-wide layout. }
+function IsOperaInstalled(): Boolean;
+begin
+  Result :=
+    FileExists(ExpandConstant('{localappdata}\Programs\Opera\opera.exe')) or
+    FileExists(ExpandConstant('{localappdata}\Programs\Opera\launcher.exe')) or
+    FileExists(ExpandConstant('{pf}\Opera\Opera\opera.exe')) or
+    FileExists(ExpandConstant('{pf32}\Opera\Opera\opera.exe'));
+end;
+
+function BraveTaskSelected(): Boolean;
+begin
+  Result := WizardIsTaskSelected('brave');
+end;
+
+function OperaTaskSelected(): Boolean;
+begin
+  Result := WizardIsTaskSelected('opera');
+end;
+
 function NativeHostRegistryPath(Browser: String): String;
 begin
   if Browser = 'chrome' then
     Result := 'Software\Google\Chrome\NativeMessagingHosts\{#NativeHostName}'
   else if Browser = 'edge' then
     Result := 'Software\Microsoft\Edge\NativeMessagingHosts\{#NativeHostName}'
+  else if Browser = 'brave' then
+    Result := 'Software\BraveSoftware\Brave-Browser\NativeMessagingHosts\{#NativeHostName}'
+  else if Browser = 'opera' then
+    Result := 'Software\Opera Software\Opera Stable\NativeMessagingHosts\{#NativeHostName}'
   else
     Result := 'Software\Mozilla\NativeMessagingHosts\{#NativeHostName}';
 end;
@@ -238,6 +285,10 @@ begin
     Result := ChromeTaskSelected()
   else if Browser = 'edge' then
     Result := EdgeTaskSelected()
+  else if Browser = 'brave' then
+    Result := BraveTaskSelected()
+  else if Browser = 'opera' then
+    Result := OperaTaskSelected()
   else
     Result := FirefoxTaskSelected();
 end;
@@ -248,6 +299,10 @@ begin
     Result := IsChromeInstalled()
   else if Browser = 'edge' then
     Result := IsEdgeInstalled()
+  else if Browser = 'brave' then
+    Result := IsBraveInstalled()
+  else if Browser = 'opera' then
+    Result := IsOperaInstalled()
   else
     Result := IsFirefoxInstalled();
 end;
@@ -352,17 +407,29 @@ begin
     else if not WizardSilent then
       UnregisterBrowser('firefox');
 
+    if ShouldRegister('brave') then
+      RegisterBrowser('brave')
+    else if not WizardSilent then
+      UnregisterBrowser('brave');
+
+    if ShouldRegister('opera') then
+      RegisterBrowser('opera')
+    else if not WizardSilent then
+      UnregisterBrowser('opera');
+
     if (not WizardSilent) and
-       ((ChromeTaskSelected() and IsChromeInstalled()) or
-        (EdgeTaskSelected() and IsEdgeInstalled())) then
+       ((BrowserTaskSelected('chrome') and IsChromeInstalled()) or
+        (BrowserTaskSelected('edge') and IsEdgeInstalled()) or
+        (BrowserTaskSelected('brave') and IsBraveInstalled()) or
+        (BrowserTaskSelected('opera') and IsOperaInstalled())) then
       MsgBox(
         'The IDM native host is registered, but the IDM Video Assistant is not installed automatically.' + #13#10 + #13#10 +
-        'To finish Chrome or Edge integration:' + #13#10 +
-        '1. Open chrome://extensions (or edge://extensions).' + #13#10 +
+        'To finish browser integration:' + #13#10 +
+        '1. Open chrome://extensions, edge://extensions, brave://extensions or opera://extensions.' + #13#10 +
         '2. Turn on Developer mode.' + #13#10 +
         '3. Choose Load unpacked and select:' + #13#10 +
         ExpandConstant('{app}') + '\BrowserExtension\IDMVideoAssistant' + #13#10 + #13#10 +
-        'See BrowserIntegrationGuide.md for details. IDM never installs browser extensions silently.',
+        'See BrowserExtension\IDMVideoAssistant\InstallationGuide.md for details. IDM never installs browser extensions silently.',
         mbInformation, MB_OK);
   end;
 end;
@@ -374,6 +441,8 @@ begin
     UnregisterBrowser('chrome');
     UnregisterBrowser('edge');
     UnregisterBrowser('firefox');
+    UnregisterBrowser('brave');
+    UnregisterBrowser('opera');
   end;
 end;
 

@@ -24,6 +24,8 @@ def make_manager(**overrides) -> DownloadManager:
         "auto_retry": False,
         "max_retries": 0,
         "speed_limit_kbps": 0,
+        "measured_capacity_kbps": 0,
+        "save": lambda: None,
     }
     options.update(overrides)
     return DownloadManager(SimpleNamespace(**options))
@@ -70,11 +72,15 @@ def assert_payload(item, size: int) -> None:
 # --------------------------------------------------------------------------- URLs
 def test_url_validation() -> None:
     assert validate_url(" https://example.com/file.zip ") == "https://example.com/file.zip"
+    assert validate_url("ftp://example.com/file.zip") == "ftp://example.com/file.zip"
+    assert validate_url("ftps://example.com/file.zip") == "ftps://example.com/file.zip"
     for bad in (
         "",
         "not a url",
-        "ftp://example.com/file.zip",
         "file:///C:/Windows/win.ini",
+        "javascript:alert(1)",
+        "data:text/html,<script>alert(1)</script>",
+        "ws://example.com/file.zip",
         "https://user:pass@example.com/file.zip",
         "https://example.com:notaport/file.zip",
         "https:///missing-host",

@@ -26,6 +26,8 @@ def make_segmented_manager(**overrides) -> DownloadManager:
         "max_retries": 0,
         "speed_limit_kbps": 0,
         "connections_per_download": 4,
+        "measured_capacity_kbps": 0,
+        "save": lambda: None,
     }
     options.update(overrides)
     return DownloadManager(SimpleNamespace(**options))

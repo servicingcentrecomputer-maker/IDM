@@ -13,10 +13,12 @@ restart; corrupted data is never finalized.
 
 from __future__ import annotations
 
-import hashlib
+import ftplib
 import logging
+import mimetypes
 import os
 import shutil
+import ssl
 import threading
 import time
 from collections import deque
@@ -24,22 +26,27 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse, urljoin
 
 import requests
 from PySide6.QtCore import QThread, Signal
+from requests.auth import HTTPBasicAuth, HTTPDigestAuth
 
 from ..constants import APP_USER_AGENT, CHUNK_SIZE
 from ..core.media import normalize_sha256
+from ..core.network import NetworkProfile
 from ..core.url_utils import (
     parse_content_range_start,
     parse_content_range_total,
+    scrub_secrets,
     unique_filename,
     validate_url,
 )
 from ..models.download_item import DownloadStatus
+from .checksum import sha256_of
 from .segmented import (
     MAX_SEGMENTS,
+    MIN_SEGMENT_BYTES,
     Segment,
     SegmentPlan,
     can_segment,
@@ -59,6 +66,11 @@ _PROGRESS_INTERVAL = 0.25
 _SPEED_WINDOW_SECONDS = 3.0
 _JOURNAL_INTERVAL = 1.5
 _SEGMENT_POLL = 0.05
+# A connection asks for at most this many bytes per request, which lets another
+# connection take over the tail of a segment that is running slowly.
+_GRANT_BYTES = 8 * 1024 * 1024
+# Beyond this many hops a redirect chain is a misconfiguration, not a CDN.
+_MAX_REDIRECT_HOPS = 8
 
 
 class _RetryableError(Exception):
@@ -73,6 +85,10 @@ class _FatalError(Exception):
 
 class _RangeLost(Exception):
     """The server stopped honouring Range requests mid-transfer."""
+
+
+class _FtpAborted(Exception):
+    """An FTP transfer was paused, stopped or cancelled by the user."""
 
 
 class _RemoteChanged(Exception):
@@ -103,6 +119,7 @@ class DownloadWorker(QThread):
         connections: int = 1,
         speed_limit_kbps: int = 0,
         expected_sha256: str = "",
+        network: NetworkProfile | None = None,
         parent=None,
     ) -> None:
         super().__init__(parent)
@@ -116,13 +133,14 @@ class DownloadWorker(QThread):
         self.max_retries = max(0, int(max_retries))
         self.connections = max(1, min(int(connections), MAX_SEGMENTS))
         self.expected_sha256 = normalize_sha256(expected_sha256)
+        self.network = network or NetworkProfile()
         self._limiter = limiter
         self._local_limiter = SpeedLimiter(max(0, int(speed_limit_kbps)) * 1024)
 
         self._pause_requested = threading.Event()
         self._stop_requested = threading.Event()
         self._cancel_requested = threading.Event()
-        self._speed_samples: deque[tuple[float, int]] = deque()
+        self._speed_samples: deque[tuple[float, int]] = deque(maxlen=64)
         self._segments_lock = threading.Lock()
         self._plan: SegmentPlan | None = None
         self._segments_disabled = False
@@ -203,7 +221,10 @@ class DownloadWorker(QThread):
                     logger.exception(
                         "Unexpected failure in download worker %s", self.download_id
                     )
-                    self.failed.emit(self.download_id, f"Unexpected error: {exc}")
+                    self.failed.emit(
+                        self.download_id,
+                        f"Unexpected error: {scrub_secrets(str(exc))}",
+                    )
                     return
 
                 if outcome == DownloadStatus.COMPLETED:
@@ -218,7 +239,20 @@ class DownloadWorker(QThread):
         # Reuse TCP/TLS connections across retries and resume attempts.
         if self._session is None:
             self._session = requests.Session()
+            self._configure_session(self._session)
         return self._session
+
+    def _configure_session(self, session: requests.Session) -> None:
+        profile = self.network
+        session.trust_env = profile.trust_env
+        if profile.proxies is not None:
+            session.proxies.update(profile.proxies)
+        if profile.auth is not None:
+            username, password, scheme = profile.auth
+            if scheme == "digest":
+                session.auth = HTTPDigestAuth(username, password)
+            else:
+                session.auth = HTTPBasicAuth(username, password)
 
     def _close_session(self) -> None:
         session = self._session
@@ -254,6 +288,8 @@ class DownloadWorker(QThread):
 
     # ------------------------------------------------------------------ transfer
     def _transfer(self) -> DownloadStatus:
+        if urlparse(self.url).scheme.lower() in {"ftp", "ftps"}:
+            return self._ftp_transfer()
         plan = load_plan(self.part_path)
         if plan is not None:
             try:
@@ -301,6 +337,254 @@ class DownloadWorker(QThread):
             offset = 0
         return self._open_transfer(offset)
 
+    # ------------------------------------------------------------------ ftp
+    def _ftp_transfer(self, allow_restart: bool = True) -> DownloadStatus:
+        # A journal belongs to an HTTP transfer; an FTP URL must never reuse it.
+        if load_plan(self.part_path) is not None:
+            discard_partial(self.part_path)
+        try:
+            offset = self.part_path.stat().st_size if self.part_path.exists() else 0
+        except OSError:
+            offset = 0
+        remote_path = unquote(urlparse(self.url).path or "")
+        if not remote_path or remote_path.endswith("/"):
+            raise _FatalError("The FTP link points to a folder, not a file.")
+
+        client: ftplib.FTP | None = None
+        try:
+            client = self._open_ftp_client()
+            total = self._ftp_size(client, remote_path)
+            if total is not None and offset > 0:
+                if offset == total:
+                    self.metadata.emit(
+                        self.download_id,
+                        total,
+                        self._ftp_content_type(),
+                        True,
+                    )
+                    self._emit_progress(total, total, final=True)
+                    return self._finalize()
+                if offset > total:
+                    logger.info(
+                        "Partial FTP data for %s is larger than the remote file; "
+                        "restarting.",
+                        self.filename,
+                    )
+                    discard_partial(self.part_path)
+                    offset = 0
+
+            self.metadata.emit(
+                self.download_id, total or 0, self._ftp_content_type(), True
+            )
+            self.state.emit(self.download_id, DownloadStatus.DOWNLOADING, "")
+            self._speed_samples.clear()
+            self._emit_progress(offset, total, final=True)
+
+            downloaded = offset
+            last_emit = time.monotonic()
+
+            def consume(chunk: bytes) -> None:
+                nonlocal downloaded, last_emit
+                if self._interrupted():
+                    raise _FtpAborted()
+                if not self._limiter.throttle(len(chunk), self._interrupted):
+                    raise _FtpAborted()
+                if not self._local_limiter.throttle(len(chunk), self._interrupted):
+                    raise _FtpAborted()
+                handle.write(chunk)
+                downloaded += len(chunk)
+                now = time.monotonic()
+                if now - last_emit >= _PROGRESS_INTERVAL:
+                    self._emit_progress(downloaded, total)
+                    last_emit = now
+
+            mode = "ab" if offset > 0 else "wb"
+            try:
+                with open(self.part_path, mode) as handle:
+                    client.retrbinary(
+                        f"RETR {remote_path}",
+                        consume,
+                        blocksize=CHUNK_SIZE,
+                        rest=offset if offset > 0 else None,
+                    )
+                    self._flush(handle)
+            except OSError as exc:
+                raise _FatalError(f"Could not write the downloaded data: {exc}") from exc
+
+            self._emit_progress(downloaded, total, final=True)
+            if total is not None:
+                try:
+                    actual = self.part_path.stat().st_size
+                except OSError:
+                    actual = 0
+                if actual != total:
+                    raise _RetryableError(
+                        "The FTP transfer ended before the whole file arrived."
+                    )
+            return self._finalize()
+        except _FtpAborted:
+            return (
+                self._terminal_status_if_requested() or DownloadStatus.STOPPED
+            )
+        except ftplib.error_perm as exc:
+            message = str(exc)
+            if allow_restart and offset > 0 and message.startswith(
+                ("500", "502", "504")
+            ):
+                logger.info(
+                    "The FTP server rejected REST for %s; restarting from zero.",
+                    self.filename,
+                )
+                discard_partial(self.part_path)
+                return self._ftp_transfer(allow_restart=False)
+            raise _FatalError(self._ftp_error(message)) from exc
+        except ftplib.error_temp as exc:
+            raise _RetryableError(f"FTP server error: {exc}") from exc
+        except (ftplib.error_proto, EOFError) as exc:
+            raise _RetryableError(
+                f"The FTP connection was interrupted: {_clean_error(exc)}"
+            ) from exc
+        except ssl.SSLError as exc:
+            raise _FatalError(
+                "TLS verification failed for this FTPS server."
+            ) from exc
+        except (TimeoutError, OSError) as exc:
+            raise _RetryableError(
+                f"FTP connection error: {_clean_error(exc)}"
+            ) from exc
+        finally:
+            if client is not None:
+                try:
+                    client.quit()
+                except Exception:  # pragma: no cover - defensive cleanup
+                    try:
+                        client.close()
+                    except Exception:
+                        pass
+
+    def _open_ftp_client(self) -> ftplib.FTP:
+        parsed = urlparse(self.url)
+        host = parsed.hostname
+        if not host:
+            raise _FatalError("The FTP link is missing a host name.")
+        try:
+            port = parsed.port or 21
+        except ValueError as exc:
+            raise _FatalError("The FTP link contains an invalid port.") from exc
+        timeout = self.network.connect_timeout
+        if parsed.scheme.lower() == "ftps":
+            client: ftplib.FTP = ftplib.FTP_TLS(
+                context=ssl.create_default_context(), timeout=timeout
+            )
+        else:
+            client = ftplib.FTP(timeout=timeout)
+        client.connect(host, port)
+        credentials = self.network.auth
+        if credentials is not None:
+            client.login(credentials[0], credentials[1])
+        else:
+            client.login()
+        if isinstance(client, ftplib.FTP_TLS):
+            client.prot_p()
+        client.set_pasv(True)
+        client.voidcmd("TYPE I")
+        return client
+
+    @staticmethod
+    def _ftp_size(client: ftplib.FTP, remote_path: str) -> int | None:
+        try:
+            size = client.size(remote_path)
+        except ftplib.Error:
+            return None
+        if size is None:
+            return None
+        try:
+            value = int(size)
+        except (TypeError, ValueError):
+            return None
+        return value if value >= 0 else None
+
+    def _ftp_content_type(self) -> str:
+        guessed, _encoding = mimetypes.guess_type(self.filename)
+        return guessed or "application/octet-stream"
+
+    @staticmethod
+    def _ftp_error(message: str) -> str:
+        if message.startswith("530"):
+            return "The FTP server rejected the user name or password."
+        if message.startswith("550"):
+            return "The file was not found or access was denied on the FTP server."
+        if message.startswith("421"):
+            return "The FTP server is busy. Try again later."
+        return f"FTP error: {message}"
+
+    def _get_stream(
+        self,
+        session: requests.Session,
+        url: str,
+        headers: dict[str, str],
+        *,
+        segment: bool = False,
+    ):
+        """Request a streamed response, following redirects under our own rules.
+
+        Handing redirects to the HTTP library means thirty hops before it gives
+        up and only the final address being checked, so a misconfigured server
+        can hold a worker for minutes and the request can be bounced through
+        hosts the user never chose.
+        """
+        timed_out = (
+            "A segment connection timed out." if segment else "The connection timed out."
+        )
+        tls_failed = (
+            "TLS certificate verification failed while downloading a segment."
+            if segment
+            else "TLS certificate verification failed. The server could not be trusted."
+        )
+        prefix = "Network error on a segment: " if segment else "Network error: "
+        hops = 0
+        while True:
+            try:
+                response = session.get(
+                    url,
+                    headers=headers,
+                    stream=True,
+                    timeout=self.network.timeout,
+                    allow_redirects=False,
+                )
+            except requests.exceptions.SSLError as exc:
+                raise _FatalError(tls_failed) from exc
+            except requests.exceptions.Timeout as exc:
+                raise _RetryableError(timed_out) from exc
+            except (
+                requests.exceptions.InvalidURL,
+                requests.exceptions.InvalidSchema,
+            ) as exc:
+                raise _FatalError("The download link is not valid.") from exc
+            except requests.exceptions.RequestException as exc:
+                raise _RetryableError(f"{prefix}{_clean_error(exc)}") from exc
+
+            location = _redirect_location(response)
+            if location is None:
+                return response
+            hops += 1
+            if hops > _MAX_REDIRECT_HOPS:
+                response.close()
+                raise _FatalError("The server redirected too many times.")
+            next_url = urljoin(url, location)
+            try:
+                self._validate_redirect(next_url)
+            except ValueError:
+                response.close()
+                raise _FatalError(
+                    "The server redirected to an unsupported address."
+                ) from None
+            if urlparse(next_url).hostname != urlparse(url).hostname:
+                # Site credentials belong to the host the user authenticated to.
+                session.auth = None
+            response.close()
+            url = next_url
+
     def _open_transfer(self, offset: int) -> DownloadStatus:
         headers = {
             "User-Agent": APP_USER_AGENT,
@@ -310,32 +594,10 @@ class DownloadWorker(QThread):
         if offset > 0:
             headers["Range"] = f"bytes={offset}-"
 
-        try:
-            response = self._http_session().get(
-                self.url,
-                headers=headers,
-                stream=True,
-                timeout=(_CONNECT_TIMEOUT, _READ_TIMEOUT),
-                allow_redirects=True,
-            )
-        except requests.exceptions.SSLError as exc:
-            raise _FatalError(
-                "TLS certificate verification failed. The server could not be trusted."
-            ) from exc
-        except requests.exceptions.Timeout as exc:
-            raise _RetryableError("The connection timed out.") from exc
-        except (requests.exceptions.InvalidURL, requests.exceptions.InvalidSchema) as exc:
-            raise _FatalError("The download link is not valid.") from exc
-        except requests.exceptions.RequestException as exc:
-            raise _RetryableError(f"Network error: {_clean_error(exc)}") from exc
+        response = self._get_stream(self._http_session(), self.url, headers)
 
         restart_single = False
         with response:
-            try:
-                self._validate_redirect(response.url)
-            except ValueError:
-                raise _FatalError("The server redirected to an unsupported address.")
-
             status = response.status_code
             final_url = response.url or self.url
             content_type = response.headers.get("Content-Type", "").split(";")[0].strip()
@@ -634,6 +896,7 @@ class DownloadWorker(QThread):
         self, segment: Segment, plan: SegmentPlan, stop_event: threading.Event
     ) -> None:
         session = requests.Session()
+        self._configure_session(session)
         try:
             self._segment_loop(segment, plan, stop_event, session)
         finally:
@@ -651,10 +914,23 @@ class DownloadWorker(QThread):
     ) -> None:
         attempts = 0
         while True:
+            reassigned = False
             with self._segments_lock:
-                finished = segment.finished
-            if finished:
-                return
+                if segment.finished:
+                    taken = plan.replan_for(segment, MIN_SEGMENT_BYTES)
+                    if taken is None:
+                        return
+                    segment = taken
+                    reassigned = True
+                else:
+                    taken = None
+            if reassigned:
+                logger.info(
+                    "Segment %s of %s picked up work from a slower connection",
+                    taken.index + 1,
+                    self.filename,
+                )
+                self._emit_segments(plan)
             if stop_event.is_set() or self._interrupted():
                 return
             try:
@@ -699,7 +975,11 @@ class DownloadWorker(QThread):
     ) -> None:
         with self._segments_lock:
             offset = segment.next_offset
-            remaining = segment.length - segment.done
+            # Only the next grant is claimed, so a connection that finishes
+            # early can still be handed part of this segment.
+            grant_end = min(segment.end, offset + _GRANT_BYTES - 1)
+            segment.claimed_until = grant_end
+            remaining = grant_end - offset + 1
         if remaining <= 0:
             return
 
@@ -707,30 +987,12 @@ class DownloadWorker(QThread):
             "User-Agent": APP_USER_AGENT,
             "Accept": "*/*",
             "Accept-Encoding": "identity",
-            "Range": f"bytes={offset}-{segment.end}",
+            "Range": f"bytes={offset}-{grant_end}",
         }
-        try:
-            response = session.get(
-                self.url,
-                headers=headers,
-                stream=True,
-                timeout=(_CONNECT_TIMEOUT, _READ_TIMEOUT),
-                allow_redirects=True,
-            )
-        except requests.exceptions.SSLError as exc:
-            raise _FatalError(
-                "TLS certificate verification failed while downloading a segment."
-            ) from exc
-        except requests.exceptions.Timeout as exc:
-            raise _RetryableError("A segment connection timed out.") from exc
-        except requests.exceptions.RequestException as exc:
-            raise _RetryableError(
-                f"Network error on a segment: {_clean_error(exc)}"
-            ) from exc
+        response = self._get_stream(session, self.url, headers, segment=True)
 
         wrote = 0
         with response:
-            self._validate_redirect(response.url)
             status = response.status_code
             if status == 200:
                 raise _RangeLost("the server ignored the segment Range request")
@@ -851,7 +1113,7 @@ class DownloadWorker(QThread):
             raise _FatalError("The downloaded data is missing.")
 
         if self.expected_sha256:
-            digest = _file_sha256(self.part_path)
+            digest = sha256_of(self.part_path)
             if digest != self.expected_sha256:
                 self.integrity.emit(self.download_id, "mismatch", digest)
                 discard_partial(self.part_path)
@@ -907,6 +1169,16 @@ class DownloadWorker(QThread):
         return max(0.0, (downloaded - first_bytes) / elapsed)
 
 
+_REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
+
+
+def _redirect_location(response) -> str | None:
+    """The next address in a redirect chain, or ``None`` for a final response."""
+    if response.status_code not in _REDIRECT_STATUSES:
+        return None
+    return str(response.headers.get("Location") or "").strip() or None
+
+
 def _content_length(headers) -> int | None:
     value = headers.get("Content-Length")
     if value is None:
@@ -957,7 +1229,7 @@ def _retry_after_seconds(value: str | None) -> float | None:
 
 def _clean_error(exc: Exception) -> str:
     text = str(exc).strip()
-    return text or exc.__class__.__name__
+    return scrub_secrets(text or exc.__class__.__name__)
 
 
 def _format_bytes(size: int) -> str:
@@ -967,11 +1239,3 @@ def _format_bytes(size: int) -> str:
             return f"{value:.1f} {unit}"
         value /= 1024
     return f"{value:.1f} TB"
-
-
-def _file_sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for block in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(block)
-    return digest.hexdigest()

@@ -3,6 +3,102 @@
 All notable changes to IDM are recorded here. Versions follow semantic
 versioning (`MAJOR.MINOR.PATCH`).
 
+## [3.6.3] — 2026-11-03
+
+### Added
+
+- **Measured bandwidth limit.** Options → Download Settings now offers three
+  limit modes — No limit, Fixed maximum, and Percentage of the measured link.
+  The percentage is taken from a rolling estimate of the connection built from
+  what IDM actually transferred, so the limit drops when the link slows down.
+  A transfer that is pinned at its own cap is never treated as a measurement of
+  the link, which stops a limit from confirming itself.
+- **Measure the link now.** A percentage limit cannot discover the ceiling it
+  is pinned under, so the button lifts the limit for a five-second window while
+  a download runs and records the real figure. The estimate is saved and re-used
+  after a restart.
+- **Speed over time** graph in the Download Progress window: one reading per
+  second, the peak and average, and a dashed line showing the limit that is
+  actually binding (the tighter of the global cap and the per-download cap).
+- **Download Properties** window (Downloads → Properties) with
+  General, Transfer, Integrity, Source and Last error sections, the real size on
+  disk, and Copy Link / Open Folder / Open actions.
+- **Open**, **Open Containing Folder** and **Properties** in the Downloads menu
+  and the list context menu. Files that Windows would execute (`.exe`, `.msi`,
+  `.bat`, `.ps1` and similar) ask for confirmation before the first open.
+- **Rename** and **Refresh Download Link** for a selected download. Rename
+  writes the file and the record together, rolls back if either fails, and
+  re-detects the category when the extension changes.
+- **Verify Checksum** computes the SHA-256 of a finished file and reports
+  whether it matches the checksum the download was given. A mismatch during an
+  automatic verification discards the partial file instead of keeping it.
+- **Add Batch Downloads** (`Ctrl+Shift+U`) takes a list of URLs, removes
+  duplicates, caps the batch at 500 and starts them into one folder.
+- **Page link capture.** The Video Assistant can collect the downloadable links
+  on a page, send them through the native host, and open one folder prompt for
+  the whole batch.
+- **System tray**: minimise to the tray, Pause all / Resume all / Quit from the
+  tray menu, a live summary in the tooltip, and native Windows notifications
+  that can be turned off.
+- **Start IDM when I sign in to Windows**, detected from both the HKCU Run key
+  and the Startup folder so an externally made change is still reported
+  correctly.
+- **Connection Settings** tab: system, direct or manual HTTP/HTTPS proxy with
+  bypass matching, per-site usernames and passwords for HTTP 401 responses, and
+  connect and read timeouts.
+- **FTP and FTPS downloads** with passive transfer, resume with `REST`, and
+  plain-language errors for 530/550/421 replies.
+- **Dynamic re-segmentation.** A connection that falls behind has half of its
+  unclaimed tail reassigned to an idle connection, so one slow stream no longer
+  holds the whole download up.
+- **Redirect handling** follows up to eight hops itself and drops stored
+  credentials when the chain leaves the original host.
+- **Brave and Opera** are recognised and registered as supported browsers, and
+  Chrome and Edge builds now report which browser they are actually running in.
+- **Live bridge status** on the Browser Integration page, so you can see
+  whether the native host is answering without sending a test download.
+- **General** library destination, so files that match no rule land somewhere
+  named rather than in an unnamed catch-all.
+
+### Changed
+
+- Credentials are kept in Windows Credential Manager, never in the settings
+  database. The stored site-authentication table holds host, user and scheme
+  only; passwords are not written to disk.
+- Every log record is passed through a secret scrubber, so a URL carrying
+  `?token=` or an `Authorization:` header cannot leave a password in the log
+  file, including inside free-form error text.
+- Media restrictions are enforced in the download engine, not only in the
+  dialogs, so a blocked platform is refused whichever route the request
+  arrives from. IDM never bypasses DRM or access controls.
+- **Delete Completed** now says how many entries it is about to clear and
+  confirms first, honouring the existing "ask before removing" setting. The
+  downloaded files are left on disk.
+- Settings from 3.6.2 load unchanged: a non-zero `speed_limit_kbps` still means
+  a fixed limit after the upgrade.
+- Chrome, Edge, Firefox, native host and Video Assistant are version 3.6.3.
+
+### Not implemented in 3.6.3
+
+Requested during this release and deliberately left out, so the gap is on the
+record rather than hidden:
+
+- SOCKS and per-protocol proxies; only HTTP/HTTPS proxying is implemented.
+- MD5 and SHA-1 verification; only SHA-256 is available.
+- Antivirus scanning of finished downloads; IDM hands the file to Windows and
+  does not invoke a scanner.
+- Adaptive streaming: HLS (`.m3u8`) and DASH (`.mpd`) manifests are recognised
+  as video but not parsed, so segment merging, quality selection, audio-only
+  extraction, subtitles and playlists are not supported.
+- A log viewer inside the application; the log file is still text you open
+  yourself.
+- Named queues with their own rules per queue; the queue is shared and ordered
+  by priority.
+- Segmented FTP; FTP transfers use one connection.
+- Page-link capture in the Chrome, Edge and Firefox integration modules; it
+  ships in the Video Assistant only.
+- Any bypass of DRM, paywalls or a site's access controls.
+
 ## [3.6.2] — 2026-11-02
 
 ### Added
