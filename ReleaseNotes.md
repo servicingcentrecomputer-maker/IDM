@@ -1,69 +1,60 @@
-# IDM 3.6.1 — Release Notes
+# IDM 3.6.2 — Release Notes
 
-**Release date:** 2026-11-02
+**Release date:** 2026-11-03
 **Platform:** Windows 10/11 x64
 **Channel:** stable
 
-Version 3.6.1 is a UI release: the existing 3.6.0 download platform now uses a
-single **Classic + Modern** interface. The shell, table, dialogs, icons and
-themes were rebuilt on the project's own design tokens, while the download
-engine, database, queue, scheduler, browser integration and updater keep their
-existing behaviour and data. Nothing was replaced with mock data — progress,
-speed, time left, sizes, completion times and totals all come from the running
-engine and `DownloadItem` records.
+Version 3.6.2 is a UI release on top of the 3.6.1 Classic + Modern shell. The
+interface now uses Hybrid Fluent design tokens for Light and Dark, the dashboard
+reports real download totals and live speed, and the download list gains
+refresh, sorting and a separate **Downloaded** column. The download engine,
+queue, scheduler, browser integration, updater, settings and database schema
+keep their existing behaviour and data.
 
 ## Highlights
 
-### Classic shell with a modern finish
+### Hybrid themes
 
-- Menu bar with **File**, **Downloads**, **View**, **Tasks** and **Help**;
-  **Downloads** adds Stop All and **Tasks** groups Options, Scheduler, Queue
-  Manager and Manage Categories.
-- Compact toolbar with Add URL, Resume, Resume All, Stop, Stop All, Delete,
-  Delete Completed, Options, Scheduler and Queue. Below 1320 px the labels
-  collapse to icons with tooltips; the search field hides below 1200 px.
-- Sidebar keeps the classic IDM workspace list (Dashboard, All Downloads,
-  Downloading, Completed, Queued, Paused), the library categories (Documents,
-  Music, Videos, Programs, Compressed Files, Images) and the tool pages, with
-  live counts for every destination.
-- **Custom categories** created while adding a download or through **Tasks →
-  Manage Categories** appear in the sidebar as their own destinations, filter the
-  table, show counts and keep selection across category edits.
+- Light (`#F3F5F8` background, `#1685D9` accent) and Dark (`#151A22` background,
+  `#3199F5` accent) palettes with matching borders, hover, selected and
+  focus-ring roles across the shell.
+- Switching between Light, Dark, System Default and Classic swaps the palette
+  while window repaints are hidden, so the white flash is gone.
+- New installations default to **Light**; Classic remains available for existing
+  preferences and stored theme choices are unchanged.
+
+### Dashboard
+
+- Cards for **Total downloads**, active, completed and total data downloaded.
+- Live current speed and the active count in the dashboard hero.
 
 ### Download list
 
-- Seven columns: **File Name** (with category subtitle and a file-type icon),
-  **Size** (downloaded/total while active), **Status** (tinted chip), **Progress**
-  (rounded meter with percentage), **Speed**, **Time Left** and **Date Added**.
-- Real-time values from the engine, honest em dashes for unknown size, speed,
-  ETA or completion data, sortable columns, multi-select, safe context menu,
-  search across name/URL/category/source domain and category filtering.
-- The status bar reports active and queued transfers, the current transfer rate,
-  the total data downloaded across all records and the application version.
+- **Refresh** toolbar button and **View → Refresh** (`F5`) reload the list from
+  the download manager without disturbing running transfers.
+- Sort selector in the content header (default order, file name, size, date
+  added, downloaded amount, progress, speed and status) that stays in sync with
+  the clickable column headers.
+- **Downloaded** column showing the bytes received so far, separate from the
+  total **Size** column.
+- A loading state that paints before a history reload.
+- Responsive columns: **Time Left** and **Date Added** drop below a 980 px
+  viewport, and **Downloaded** and **Speed** as well below 820 px, so file names
+  stay readable.
 
-### Download Complete window
+### Navigation and layout
 
-A new non-modal window opens when a transfer finishes (unless disabled in
-Options → Confirmations):
+- Sidebar footer with an online/offline connection dot, the live transfer rate
+  and a tooltip explaining when Windows network monitoring is unavailable.
+- New **Other Files** library destination, a version chip in the toolbar and the
+  application version in the window title.
+- A **More** toolbar menu holding Queue, Scheduler and Options below 1120 px.
 
-- Real average speed, completion time, final size and source host.
-- **Open File** and **Open Folder** actions using the real saved path, plus
-  Close; the window can stay open while downloads continue.
-- A persisted **Show this window when a download completes** checkbox.
-- One window per finished download; closing it releases the dialog cleanly.
+### Browser extensions
 
-### Themes and design system
+- Chrome, Edge, Firefox and Video Assistant manifests are version 3.6.2.
 
-- Three themes: **Classic Light**, **Modern Light** and **Modern Dark**, plus
-  Follow Windows. Switching applies instantly without restarting and the choice
-  persists in settings; every dialog, card, menu and status widget follows.
-- Shared spacing, radius, typography, elevation, icon-size and motion tokens in
-  `idm/ui/design.py`, compiled into the Qt style sheet.
-- Updated monochrome SVG icon set, including Stop All and Delete Completed.
-- Custom-painted progress meter, status chips and sidebar rows stay readable in
-  all three themes; focus outlines, hover and disabled states are kept.
-
-### Preserved functionality
+## Preserved functionality
 
 - Segmented HTTP downloads over up to 16 connections, Range resume after a
   restart, retry and speed limits.
@@ -76,31 +67,29 @@ Options → Confirmations):
 
 ## Upgrade
 
-- Install `IDM-Setup-3.6.1.exe` over 3.6.0 or any earlier release. The same
+- Install `IDM-Setup-3.6.2.exe` over 3.6.1 or any earlier release. The same
   `AppId`, installation directory and `%APPDATA%\IDM Download Manager` data are
   reused; no migration is needed for this release.
-- The original 3.6.0 binaries are kept byte-for-byte in
-  `Backup/Release_3.6.0_PreRedesign/`; the new installer uses a new file name
-  and does not replace them.
 
 ## Artifacts
 
 - `dist\IDM\IDM.exe` — portable application with `_internal\`,
   `IDM_Updater.exe` and `IDM_NativeHost.exe`
-- `dist-installer\IDM-Setup-3.6.1.exe` — installer
-- `release\IDM-3.6.1-win64.zip` — bundle with installer, portable build,
+- `dist-installer\IDM-Setup-3.6.2.exe` — installer (SHA-256
+  `b2c9f9cea6ed6f7f6bf742701300ba7200b6897dd3f81ae16d15bcad4b7afa1d`)
+- `release\IDM-3.6.2-win64.zip` — bundle with installer, portable build,
   extension archives, documentation and `SHA256SUMS.txt`
-- `dist-extensions\IDM_Video_Assistant_3.6.1.zip` — Video Assistant package
+- `dist-extensions\IDM_Video_Assistant_3.6.2.zip` — Video Assistant package
 
 ## Known limitations
 
-- The signed update feed advertises 3.6.1 with the published installer's real
-  SHA-256 and package size. The automatic download-and-install path from 3.6.0
-  was not re-run end-to-end in this session.
 - The installer is unsigned unless a CA-issued Authenticode certificate is
   configured; the signed manifest and SHA-256 remain the trust anchors.
 - Windows 10 is supported by the installer configuration but validation ran on
   Windows 11 x64.
+- The signed update feed advertises 3.6.2 with the published installer's real
+  SHA-256 and package size. The automatic download-and-install path from 3.6.1
+  was not re-run end-to-end in this session.
 - Real browser interception still needs a manual pass in Chrome and Edge; the
   native host, bridge, protocol and prompt contract are covered by automated
   tests.
