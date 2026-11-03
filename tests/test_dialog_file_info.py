@@ -13,7 +13,11 @@ from idm.core.settings import AppSettings
 from idm.core.url_utils import format_progress_size
 from idm.engine.manager import DownloadManager
 from idm.models.download_item import DownloadItem, DownloadStatus
-from idm.models.table_model import COLUMN_SIZE, DownloadTableModel
+from idm.models.table_model import (
+    COLUMN_DOWNLOADED,
+    COLUMN_SIZE,
+    DownloadTableModel,
+)
 from idm.ui.dialogs.download_file_info import AddDownloadDialog
 from idm.ui.theme import ThemeManager
 
@@ -365,7 +369,7 @@ def test_progress_size_formats_live_bytes() -> None:
     assert format_progress_size(1536, None) == "1.5 KB"
 
 
-def test_size_column_shows_live_downloaded_bytes(qt_app, settings, manager) -> None:
+def test_size_and_downloaded_columns(qt_app, settings, manager) -> None:
     item = DownloadItem(
         url="https://example.com/archive.rar",
         filename="archive.rar",
@@ -377,11 +381,13 @@ def test_size_column_shows_live_downloaded_bytes(qt_app, settings, manager) -> N
     )
     model = DownloadTableModel(manager)
     model._items = [item]
-    index = model.index(0, COLUMN_SIZE)
-    assert model.data(index, Qt.ItemDataRole.DisplayRole) == "8/64 MB"
+    size_index = model.index(0, COLUMN_SIZE)
+    downloaded_index = model.index(0, COLUMN_DOWNLOADED)
+    assert model.data(size_index, Qt.ItemDataRole.DisplayRole) == "64.0 MB"
+    assert model.data(downloaded_index, Qt.ItemDataRole.DisplayRole) == "8.0 MB"
     item.downloaded_bytes = item.total_bytes
     item.status = DownloadStatus.COMPLETED
-    assert model.data(index, Qt.ItemDataRole.DisplayRole) == "64.0 MB"
+    assert model.data(downloaded_index, Qt.ItemDataRole.DisplayRole) == "64.0 MB"
 
 
 def test_dialog_switches_to_live_progress_after_start(

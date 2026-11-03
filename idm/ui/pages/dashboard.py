@@ -228,22 +228,22 @@ class DashboardPage(QWidget):
         stats.setSpacing(design.SPACING["md"])
         self._stats_grid = stats
         self._stats_columns = 0
+        self._total_card = StatCard(
+            theme, "Total downloads", "0", "Every recorded transfer", icon_name="grid"
+        )
         self._active_card = StatCard(
             theme, "Downloading", "0", "No transfers running", icon_name="download"
-        )
-        self._queue_card = StatCard(
-            theme, "Queued", "0", "Waiting for a slot", icon_name="queue"
         )
         self._completed_card = StatCard(
             theme, "Completed", "0", "Stored in your library", icon_name="check_circle"
         )
         self._data_card = StatCard(
-            theme, "Downloaded", "0 B", "Across completed files", icon_name="database"
+            theme, "Total data", "0 B", "Across completed files", icon_name="database"
         )
         self._active_card.set_accent(True)
         self._stat_cards = (
+            self._total_card,
             self._active_card,
-            self._queue_card,
             self._completed_card,
             self._data_card,
         )
@@ -417,13 +417,27 @@ class DashboardPage(QWidget):
         self._hero_numbers.setLayout(numbers)
         self._hero_speed = QLabel("0 B/s")
         self._hero_speed.setObjectName("HeroStatValue")
-        self._hero_active = QLabel("0 active")
-        self._hero_active.setObjectName("HeroStatLabel")
+        self._hero_speed.setToolTip("Current download speed")
+        self._hero_speed.setAccessibleName("Current speed")
+        speed_label = QLabel("CURRENT SPEED")
+        speed_label.setObjectName("HeroStatLabel")
         speed_box = QVBoxLayout()
         speed_box.setSpacing(0)
         speed_box.addWidget(self._hero_speed)
-        speed_box.addWidget(self._hero_active)
+        speed_box.addWidget(speed_label)
         numbers.addLayout(speed_box)
+
+        self._hero_active = QLabel("0")
+        self._hero_active.setObjectName("HeroStatValue")
+        self._hero_active.setToolTip("Active downloads")
+        self._hero_active.setAccessibleName("Active downloads")
+        active_label = QLabel("ACTIVE")
+        active_label.setObjectName("HeroStatLabel")
+        active_box = QVBoxLayout()
+        active_box.setSpacing(0)
+        active_box.addWidget(self._hero_active)
+        active_box.addWidget(active_label)
+        numbers.addLayout(active_box)
 
         self._hero_limit = QLabel("Unlimited")
         self._hero_limit.setObjectName("HeroStatValue")
@@ -564,18 +578,25 @@ class DashboardPage(QWidget):
         else:
             self._hero_title.setText("Everything is ready.")
 
-        self._active_card.set_value(
-            str(len(active)),
-            f"{format_speed(speed)} total" if speed > 0 else "Idle",
+        self._total_card.set_value(
+            str(len(items)),
+            f"{len(completed)} completed" if items else "No transfers recorded",
         )
-        self._queue_card.set_value(str(len(queued)), "Waiting for a slot")
+        if active:
+            active_detail = f"{format_speed(speed)} total" if speed > 0 else "Starting"
+        elif queued:
+            active_detail = f"{len(queued)} queued"
+        else:
+            active_detail = "Idle"
+        self._active_card.set_value(str(len(active)), active_detail)
         self._completed_card.set_value(str(len(completed)), "Files are kept on disk")
         self._data_card.set_value(
             format_size(total_bytes) if total_bytes else "0 B",
-            f"{len(items)} download{'s' if len(items) != 1 else ''} recorded",
+            f"Across {len(completed)} completed "
+            f"file{'s' if len(completed) != 1 else ''}",
         )
         self._hero_speed.setText(format_speed(speed) if speed > 0 else "0 B/s")
-        self._hero_active.setText(f"{len(active)} active")
+        self._hero_active.setText(str(len(active)))
         limit = int(self._settings.speed_limit_kbps)
         self._hero_limit.setText(f"{limit} KB/s" if limit else "Unlimited")
         self._resume_button.setEnabled(any(item.can_resume for item in items))
@@ -603,6 +624,7 @@ class DashboardPage(QWidget):
         for download_id, row in list(self._transfer_rows.items()):
             if download_id not in visible_ids:
                 self._rows_layout.removeWidget(row)
+                row.hide()
                 row.deleteLater()
                 del self._transfer_rows[download_id]
 

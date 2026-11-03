@@ -143,6 +143,11 @@ _SVG_BODIES: dict[str, str] = {
         '<rect x="3.5" y="4.5" width="17" height="15" rx="2"/>'
         '<path d="M9 4.5v15"/><path d="M5.5 8h1.5M5.5 11h1.5"/>'
     ),
+    "more": (
+        '<circle cx="6" cy="12" r="1.5" fill="{color}" stroke="none"/>'
+        '<circle cx="12" cy="12" r="1.5" fill="{color}" stroke="none"/>'
+        '<circle cx="18" cy="12" r="1.5" fill="{color}" stroke="none"/>'
+    ),
     "status": (
         '<rect x="3.5" y="4.5" width="17" height="15" rx="2"/>'
         '<path d="M3.5 15.5h17"/><path d="M6 18h.01"/>'

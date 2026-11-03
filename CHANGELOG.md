@@ -3,6 +3,39 @@
 All notable changes to IDM are recorded here. Versions follow semantic
 versioning (`MAJOR.MINOR.PATCH`).
 
+## [3.6.2] — 2026-11-02
+
+### Added
+
+- Hybrid Fluent design tokens: Light (`#F3F5F8` background, `#1685D9` accent)
+  and Dark (`#151A22` background, `#3199F5` accent) palettes with matching
+  borders, hover, selected and focus-ring roles across the shell.
+- **Refresh** toolbar button and **View → Refresh** (`F5`), which reloads the
+  list from the download manager without disturbing running transfers.
+- Sort selector in the content header (default order, file name, size,
+  date added, downloaded amount, progress, speed and status) that stays in
+  sync with the clickable column headers.
+- **Downloaded** column showing the bytes received so far, separate from the
+  total **Size** column.
+- Sidebar connection footer with an online/offline dot, live transfer rate and
+  a tooltip explaining when Windows network monitoring is unavailable.
+- **Other Files** library destination, a version chip in the toolbar and the
+  application version in the window title.
+- Dashboard cards for **Total downloads**, active, completed and total data,
+  with live current speed and the active count in the hero.
+- A loading state in the download list that paints before a history reload, and
+  a **More** toolbar menu holding Queue, Scheduler and Options below 1120 px.
+  The table also drops Time Left and Date Added below a 980 px viewport, and
+  Downloaded and Speed below 820 px, so file names stay readable.
+- Themes now hide window repaints while the palette is swapped, removing the
+  white flash when switching between Light, Dark, System and Classic.
+
+### Changed
+
+- New installations default to the Light theme; the Classic theme remains
+  available for existing preferences and stored settings are unchanged.
+- Chrome, Edge, Firefox and Video Assistant manifests are version 3.6.2.
+
 ## [3.6.1] — 2026-11-02
 
 ### Added

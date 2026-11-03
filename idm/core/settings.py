@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 _UPDATE_CHANNELS = {"stable", "beta"}
 
 _DEFAULTS: dict[str, Any] = {
-    "theme": "classic",
+    "theme": "light",
     "download_dir": default_download_dir(),
     "max_concurrent": 3,
     "connections_per_download": 12,

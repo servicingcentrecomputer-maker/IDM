@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..models.download_item import DownloadStatus
-from ..models.table_model import ITEM_ROLE
+from ..models.table_model import COLUMN_ETA, ITEM_ROLE
 from . import icons
 from .theme import Palette, ThemeManager
 
@@ -352,7 +352,7 @@ class ValueDelegate(_BaseDelegate):
         painter.setFont(font)
         if self._is_selected(option):
             color = option.palette.color(QPalette.ColorRole.HighlightedText)
-        elif index.column() == 5:
+        elif index.column() == COLUMN_ETA:
             color = QColor(p.text_muted)
         else:
             color = QColor(p.text)

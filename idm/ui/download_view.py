@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (
     QFrame,
     QHeaderView,
     QLabel,
+    QProgressBar,
     QPushButton,
     QStackedWidget,
     QTableView,
@@ -18,6 +19,7 @@ from PySide6.QtWidgets import (
 from ..models.table_model import (
     COLUMN_COUNT,
     COLUMN_DATE_ADDED,
+    COLUMN_DOWNLOADED,
     COLUMN_ETA,
     COLUMN_NAME,
     COLUMN_PROGRESS,
@@ -37,6 +39,8 @@ from .theme import ThemeManager
 
 class DownloadTable(QTableView):
     """Classic download list with click-to-sort column headers."""
+
+    sort_changed = Signal(int, int)
 
     def __init__(self, theme: ThemeManager, parent=None) -> None:
         super().__init__(parent)
@@ -81,6 +85,7 @@ class DownloadTable(QTableView):
         value_delegate = ValueDelegate(theme, self)
         for column in (
             COLUMN_SIZE,
+            COLUMN_DOWNLOADED,
             COLUMN_SPEED,
             COLUMN_ETA,
             COLUMN_DATE_ADDED,
@@ -94,18 +99,51 @@ class DownloadTable(QTableView):
         header = self.horizontalHeader()
         header.setSectionResizeMode(COLUMN_NAME, QHeaderView.ResizeMode.Stretch)
         widths = {
-            COLUMN_SIZE: 88,
+            COLUMN_SIZE: 84,
             COLUMN_STATUS: 116,
-            COLUMN_PROGRESS: 112,
-            COLUMN_SPEED: 100,
-            COLUMN_ETA: 88,
-            COLUMN_DATE_ADDED: 118,
+            COLUMN_PROGRESS: 100,
+            COLUMN_DOWNLOADED: 92,
+            COLUMN_SPEED: 92,
+            COLUMN_ETA: 78,
+            COLUMN_DATE_ADDED: 112,
         }
         for column, width in widths.items():
             self.setColumnWidth(column, width)
             header.setSectionResizeMode(column, QHeaderView.ResizeMode.Fixed)
+        self._update_visible_columns()
         if self._sorted and hasattr(model, "sort"):
             model.sort(self._sort_column, self._sort_order)
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._update_visible_columns()
+
+    def _update_visible_columns(self) -> None:
+        """Drop low-priority columns before the file name is squeezed out."""
+        width = self.viewport().width()
+        hidden = set()
+        if width < 820:
+            hidden.update(
+                (COLUMN_DOWNLOADED, COLUMN_SPEED, COLUMN_ETA, COLUMN_DATE_ADDED)
+            )
+        elif width < 980:
+            hidden.update((COLUMN_ETA, COLUMN_DATE_ADDED))
+        for column in (COLUMN_DOWNLOADED, COLUMN_SPEED, COLUMN_ETA, COLUMN_DATE_ADDED):
+            self.setColumnHidden(column, column in hidden)
+
+    def apply_sort(self, column: int, order: Qt.SortOrder) -> None:
+        if not 0 <= column < COLUMN_COUNT:
+            return
+        self._sort_column = column
+        self._sort_order = order
+        self._sorted = True
+        header = self.horizontalHeader()
+        header.setSortIndicatorShown(True)
+        header.setSortIndicator(column, order)
+        model = self.model()
+        if model is not None and hasattr(model, "sort"):
+            model.sort(column, order)
+        self.sort_changed.emit(column, order.value)
 
     def _on_header_clicked(self, column: int) -> None:
         if not 0 <= column < COLUMN_COUNT:
@@ -118,21 +156,17 @@ class DownloadTable(QTableView):
             )
         else:
             order = Qt.SortOrder.AscendingOrder
-        self._sort_column = column
-        self._sort_order = order
-        self._sorted = True
-        header = self.horizontalHeader()
-        header.setSortIndicatorShown(True)
-        header.setSortIndicator(column, order)
-        model = self.model()
-        if model is not None and hasattr(model, "sort"):
-            model.sort(column, order)
+        self.apply_sort(column, order)
 
     def reset_sort(self) -> None:
         self._sorted = False
         self._sort_column = COLUMN_NAME
         self._sort_order = Qt.SortOrder.AscendingOrder
         self.horizontalHeader().setSortIndicatorShown(False)
+        model = self.model()
+        if model is not None and hasattr(model, "sort"):
+            model.sort(-1, Qt.SortOrder.AscendingOrder)
+        self.sort_changed.emit(-1, Qt.SortOrder.AscendingOrder.value)
 
 
 class EmptyState(QWidget):
@@ -189,6 +223,37 @@ class EmptyState(QWidget):
         self._text.setText(text)
 
 
+class LoadingState(QWidget):
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self.setObjectName("LoadingState")
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(40, 32, 40, 32)
+        layout.setSpacing(0)
+        layout.addStretch(1)
+
+        bar = QProgressBar()
+        bar.setObjectName("LoadingBar")
+        bar.setRange(0, 0)
+        bar.setTextVisible(False)
+        bar.setFixedSize(180, 8)
+        layout.addWidget(bar, 0, Qt.AlignmentFlag.AlignHCenter)
+        layout.addSpacing(16)
+
+        title = QLabel("Loading downloads…")
+        title.setObjectName("EmptyTitle")
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(title)
+        layout.addSpacing(6)
+
+        text = QLabel("Reading your download history.")
+        text.setObjectName("EmptyText")
+        text.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(text)
+        layout.addStretch(1)
+
+
 class DownloadView(QFrame):
     add_requested = Signal()
 
@@ -203,11 +268,22 @@ class DownloadView(QFrame):
         self.table = DownloadTable(theme, self)
         self.empty_state = EmptyState(self)
         self.empty_state.add_requested.connect(self.add_requested)
+        self.loading_state = LoadingState(self)
 
         self._stack = QStackedWidget(self)
         self._stack.addWidget(self.table)
         self._stack.addWidget(self.empty_state)
+        self._stack.addWidget(self.loading_state)
         layout.addWidget(self._stack)
+
+    @property
+    def is_loading(self) -> bool:
+        return self._stack.currentWidget() is self.loading_state
+
+    def show_loading(self, visible: bool = True) -> None:
+        self._stack.setCurrentWidget(
+            self.loading_state if visible else self.table
+        )
 
     def show_empty(
         self,

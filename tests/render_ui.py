@@ -117,6 +117,7 @@ def main() -> int:
     wait_until(app, lambda: active.downloaded_bytes >= 700 * 1024)
 
     theme.set_mode("classic")
+    window._sidebar.select("dashboard", emit_signal=True)
     app.processEvents()
     capture(window, "native-dashboard-classic.png")
 
@@ -127,6 +128,42 @@ def main() -> int:
     theme.set_mode("dark")
     app.processEvents()
     capture(window, "native-dashboard-dark.png")
+
+    # 3.6.2: adaptive widths and the narrow-window overflow menu.
+    theme.set_mode("light")
+    window.resize(1366, 768)
+    app.processEvents()
+    capture(window, "v362-dashboard-light-1366.png")
+    window.resize(1600, 900)
+    app.processEvents()
+    capture(window, "v362-dashboard-light-1600.png")
+
+    window._sidebar.select("all", emit_signal=True)
+    window.resize(1366, 768)
+    app.processEvents()
+    capture(window, "v362-downloads-light-1366.png")
+
+    theme.set_mode("dark")
+    app.processEvents()
+    capture(window, "v362-downloads-dark-1366.png")
+
+    window.resize(1040, 720)
+    app.processEvents()
+    capture(window, "v362-downloads-dark-1040.png")
+    toolbar = window._toolbar
+    toolbar._overflow_button.showMenu()
+    wait_until(app, lambda: toolbar._overflow_menu.isVisible())
+    capture(toolbar._overflow_menu, "v362-more-menu-dark.png")
+    toolbar._overflow_menu.close()
+    app.processEvents()
+
+    theme.set_mode("classic")
+    app.processEvents()
+    capture(window, "v362-downloads-classic-1040.png")
+    window._sidebar.select("dashboard", emit_signal=True)
+    window.resize(1240, 770)
+    theme.set_mode("dark")
+    app.processEvents()
 
     progress = DownloadProgressDialog(manager, active.id, theme, window)
     progress.show()

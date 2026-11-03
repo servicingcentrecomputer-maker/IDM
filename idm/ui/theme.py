@@ -131,100 +131,100 @@ CLASSIC = Palette(
 )
 
 LIGHT = Palette(
-    bg="#F1F4FA",
+    bg="#F3F5F8",
     surface="#FFFFFF",
-    surface_alt="#F6F8FD",
+    surface_alt="#F8FAFC",
     card="#FFFFFF",
-    border="#DDE4F0",
-    border_soft="#E9EEF7",
-    text="#0E1726",
-    text_muted="#526079",
-    text_faint="#7E8AA0",
-    accent="#1D5BEA",
-    accent_hover="#1749CC",
-    accent_pressed="#123AA8",
-    accent_soft="#EDF2FF",
-    success="#0E9F6E",
-    success_soft="#E2F8EF",
-    warning="#B26B00",
-    warning_soft="#FFF3DE",
-    danger="#D64545",
-    danger_soft="#FDEDED",
-    selection="#E7EEFF",
-    track="#E4EAF5",
-    scrollbar="#C3CDDE",
-    sidebar_bg="#F8FAFE",
-    sidebar_active="#E7EEFF",
-    nav_hover="#EFF3FB",
+    border="#E3E9F0",
+    border_soft="#EDF1F6",
+    text="#25364A",
+    text_muted="#718096",
+    text_faint="#98A5B6",
+    accent="#1685D9",
+    accent_hover="#1274C4",
+    accent_pressed="#0E62AA",
+    accent_soft="#E8F4FC",
+    success="#1B8A5A",
+    success_soft="#E4F5EC",
+    warning="#B7791F",
+    warning_soft="#FDF3E2",
+    danger="#C94A4A",
+    danger_soft="#FBEDED",
+    selection="#DDEEFF",
+    track="#E7EDF4",
+    scrollbar="#C2CCDA",
+    sidebar_bg="#FFFFFF",
+    sidebar_active="#DDEEFF",
+    nav_hover="#EDF5FC",
     toolbar_background="#FFFFFF",
     menubar_background="#FFFFFF",
-    status_background="#F8FAFE",
+    status_background="#F8FAFC",
     header_background="transparent",
-    row_hover="#F6F9FF",
-    card_hover="#FAFCFF",
-    chip_bg="#F0F4FB",
-    chip_text="#46536A",
-    focus_ring="#B9CDFF",
+    row_hover="#EDF5FC",
+    card_hover="#F6FAFD",
+    chip_bg="#EFF3F8",
+    chip_text="#52627A",
+    focus_ring="#A9D5F2",
     accent_gradient=(
         "qlineargradient(x1:0, y1:0, x2:1, y2:1, "
-        "stop:0 #3F7DFF, stop:0.55 #1D5BEA, stop:1 #1743C2)"
+        "stop:0 #2B9BEF, stop:0.55 #1685D9, stop:1 #0F6FB8)"
     ),
     hero_text="#FFFFFF",
     on_accent="#FFFFFF",
-    shadow="#0B1B36",
-    radius="8px",
-    control_radius="10px",
-    panel_radius="14px",
-    input_radius="10px",
+    shadow="#1B2B3A",
+    radius="6px",
+    control_radius="8px",
+    panel_radius="12px",
+    input_radius="8px",
     pill_radius="14px",
 )
 
 DARK = Palette(
-    bg="#080D18",
-    surface="#0E1626",
-    surface_alt="#131D30",
-    card="#101A2B",
-    border="#22314B",
-    border_soft="#19243A",
-    text="#E9F0FC",
-    text_muted="#9DAEC8",
-    text_faint="#66788F",
-    accent="#4D8DFF",
-    accent_hover="#6EA4FF",
-    accent_pressed="#3B78EB",
-    accent_soft="#14284B",
+    bg="#151A22",
+    surface="#202936",
+    surface_alt="#1B232E",
+    card="#202936",
+    border="#344151",
+    border_soft="#2A3542",
+    text="#E6EDF5",
+    text_muted="#9AA9BA",
+    text_faint="#6F7D8F",
+    accent="#3199F5",
+    accent_hover="#55ACF7",
+    accent_pressed="#1F7FD6",
+    accent_soft="#1C2E41",
     success="#3DD6A0",
-    success_soft="#0D3429",
-    warning="#F2B45E",
-    warning_soft="#35280F",
+    success_soft="#12352B",
+    warning="#F0B45E",
+    warning_soft="#3A2B12",
     danger="#FF7B7B",
-    danger_soft="#3B1D22",
-    selection="#15294A",
-    track="#1E2B42",
-    scrollbar="#35455F",
-    sidebar_bg="#0A1220",
-    sidebar_active="#152744",
-    nav_hover="#111B2D",
-    toolbar_background="#0A1220",
-    menubar_background="#0A1220",
-    status_background="#090F1A",
+    danger_soft="#3D1F23",
+    selection="#263F5B",
+    track="#2B3645",
+    scrollbar="#46566B",
+    sidebar_bg="#1A222D",
+    sidebar_active="#263F5B",
+    nav_hover="#293749",
+    toolbar_background="#1A222D",
+    menubar_background="#1A222D",
+    status_background="#171E27",
     header_background="transparent",
-    row_hover="#121D31",
-    card_hover="#142039",
-    chip_bg="#182338",
-    chip_text="#A9B7CD",
-    focus_ring="#2C4E88",
+    row_hover="#293749",
+    card_hover="#263243",
+    chip_bg="#2C3746",
+    chip_text="#B7C3D1",
+    focus_ring="#2F628F",
     accent_gradient=(
         "qlineargradient(x1:0, y1:0, x2:1, y2:1, "
-        "stop:0 #3F7BFF, stop:0.55 #1D5BEA, stop:1 #123A9E)"
+        "stop:0 #46A6F8, stop:0.55 #3199F5, stop:1 #1F7FD6)"
     ),
     hero_text="#FFFFFF",
     on_accent="#FFFFFF",
     shadow="#000000",
-    radius="8px",
-    control_radius="10px",
-    panel_radius="14px",
-    input_radius="10px",
+    radius="6px",
+    control_radius="8px",
+    panel_radius="12px",
+    input_radius="8px",
     pill_radius="14px",
 )
 
@@ -235,14 +235,15 @@ PALETTES = {
 }
 
 THEME_LABELS = {
-    "classic": "Classic Light",
-    "light": "Modern Light",
-    "dark": "Modern Dark",
-    "system": "Follow Windows",
+    "classic": "Classic (Legacy)",
+    "light": "Light",
+    "dark": "Dark",
+    "system": "System Default",
 }
 
-# Order used by selectors.  Classic is legacy but still fully supported.
-THEME_ORDER = ("classic", "light", "dark", "system")
+# Order used by selectors.  Classic is legacy but still fully supported so
+# existing user preferences keep working.
+THEME_ORDER = ("light", "dark", "system", "classic")
 MODERN_THEMES = ("light", "dark", "system")
 
 
@@ -363,6 +364,15 @@ QLabel#BrandTagline {
     color: $text_faint;
     letter-spacing: 1.8px;
 }
+QLabel#BrandVersion {
+    background-color: $accent_soft;
+    border: 1px solid $focus_ring;
+    border-radius: 8px;
+    color: $accent;
+    font-size: 9px;
+    font-weight: 700;
+    padding: 1px 7px;
+}
 QFrame#ToolbarSeparator {
     background-color: $border_soft;
     border: none;
@@ -468,6 +478,20 @@ QFrame#SidebarFooterBox {
     border-top: 1px solid $border_soft;
     background: transparent;
 }
+QFrame#SidebarConnection {
+    background-color: $surface_alt;
+    border: 1px solid $border_soft;
+    border-radius: $control_radius;
+}
+QLabel#SidebarConnectionText {
+    color: $text_muted;
+    font-size: 10px;
+    font-weight: 600;
+}
+QLabel#SidebarConnectionSpeed {
+    color: $text_faint;
+    font-size: 9px;
+}
 QPushButton#SidebarSettings {
     background: transparent;
     border: 1px solid transparent;
@@ -545,6 +569,16 @@ QLineEdit#SearchBox:hover {
 QLineEdit#SearchBox:focus {
     border-color: $accent;
     background-color: $surface;
+}
+QLabel#SortLabel {
+    font-size: 12px;
+    color: $text_muted;
+}
+QComboBox#SortCombo {
+    min-width: 150px;
+    min-height: 16px;
+    padding: 4px 26px 4px 10px;
+    font-size: 12px;
 }
 
 /* ------------------------------------------------------------- panel / cards */
@@ -1908,8 +1942,8 @@ class ThemeManager(QObject):
     def __init__(self, app: QApplication) -> None:
         super().__init__()
         self._app = app
-        self._mode = "classic"
-        self._palette = CLASSIC
+        self._mode = "light"
+        self._palette = LIGHT
         self._system_watch = False
         self._watch_system_theme()
 
@@ -1953,7 +1987,7 @@ class ThemeManager(QObject):
     # ------------------------------------------------------------------ apply
     def set_mode(self, mode: str, apply: bool = True) -> None:
         if mode not in THEME_ORDER:
-            mode = "classic"
+            mode = "light"
         changed_palette = resolved_palette(mode)
         if mode == self._mode and changed_palette == self._palette:
             if apply:
@@ -1974,19 +2008,46 @@ class ThemeManager(QObject):
         return mode
 
     def apply(self) -> None:
-        self._palette = resolved_palette(self._mode)
-        p = self._palette
-        icons.clear_icon_cache()
-        self._app.setPalette(_make_qpalette(p))
-        tokens = {field.name: str(getattr(p, field.name)) for field in fields(p)}
-        tokens.update(_radius_tokens)
-        tokens["font_family"] = design.FONT_FAMILY
-        tokens["check_icon"] = asset_path("check.svg").as_posix()
-        tokens["chevron_icon"] = asset_path("chevron-down.svg").as_posix()
-        tab_template = _CLASSIC_TABS if self.is_classic else _MODERN_TABS
-        tokens["tabs_qss"] = Template(tab_template).substitute(tokens)
-        self._app.setStyleSheet(QSS_TEMPLATE.substitute(tokens))
-        self.changed.emit()
+        # Freeze visible windows while the palette and stylesheet are swapped,
+        # then repaint once.  Without this Qt can present an unstyled white
+        # frame for a moment when switching between light and dark.
+        windows = [
+            window
+            for window in self._app.topLevelWidgets()
+            if window.isVisible()
+        ]
+        update_states = [
+            (window, window.updatesEnabled()) for window in windows
+        ]
+        for window, enabled in update_states:
+            if enabled:
+                window.setUpdatesEnabled(False)
+        try:
+            self._palette = resolved_palette(self._mode)
+            p = self._palette
+            icons.clear_icon_cache()
+            self._app.setPalette(_make_qpalette(p))
+            tokens = {
+                field.name: str(getattr(p, field.name)) for field in fields(p)
+            }
+            tokens.update(_radius_tokens)
+            tokens["font_family"] = design.FONT_FAMILY
+            tokens["check_icon"] = asset_path("check.svg").as_posix()
+            tokens["chevron_icon"] = asset_path("chevron-down.svg").as_posix()
+            tab_template = _CLASSIC_TABS if self.is_classic else _MODERN_TABS
+            tokens["tabs_qss"] = Template(tab_template).substitute(tokens)
+            self._app.setStyleSheet(QSS_TEMPLATE.substitute(tokens))
+            self.changed.emit()
+        finally:
+            for window, enabled in update_states:
+                try:
+                    if enabled:
+                        window.setUpdatesEnabled(True)
+                    self.apply_window_chrome(window)
+                    window.update()
+                except RuntimeError:
+                    # The window was closed by a theme-change handler.
+                    pass
 
     def apply_window_chrome(self, window: QWidget) -> None:
         set_dark_title_bar(window, self.is_dark)

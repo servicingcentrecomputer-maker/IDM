@@ -152,6 +152,14 @@ class DownloadManager(QObject):
     def total_speed(self) -> float:
         return sum(item.speed for item in self._items.values() if item.is_active)
 
+    @property
+    def network_online(self) -> bool:
+        return bool(self._network_monitor.online)
+
+    @property
+    def network_status_available(self) -> bool:
+        return bool(self._network_monitor.available)
+
     def video_items(self) -> list[DownloadItem]:
         return [item for item in self.items() if item.is_video]
 

@@ -70,10 +70,11 @@ def _format_update_time(value: str) -> str:
 
 _THEME_DESCRIPTIONS = {
     "classic": (
-        "The original IDM look: compact grey chrome and classic blue meters."
+        "The original IDM look: compact grey chrome and classic blue meters. "
+        "Kept for existing preferences."
     ),
-    "light": "Bright Fluent surfaces, rounded controls and azure accents.",
-    "dark": "A deep navy Fluent palette for comfortable night use.",
+    "light": "Bright Fluent surfaces, soft borders and azure accents.",
+    "dark": "Layered charcoal surfaces with a brighter azure accent.",
     "system": "Automatically follows the Windows light or dark setting.",
 }
 

@@ -1,4 +1,4 @@
-; IDM 3.6.1 installer
+; IDM 3.6.2 installer
 ; Compile with Inno Setup 6.3+ or 7.x:
 ;   ISCC.exe installer\IDM_Setup.iss
 ;
@@ -23,8 +23,8 @@
 ; extension page or a store.
 
 #define MyAppName "IDM"
-#define MyAppVersion "3.6.1"
-#define MyAppVerName "IDM 3.6.1"
+#define MyAppVersion "3.6.2"
+#define MyAppVerName "IDM 3.6.2"
 #define MyAppPublisher "IDM"
 #define MyAppExeName "IDM.exe"
 #define NativeHostExeName "IDM_NativeHost.exe"
@@ -41,7 +41,7 @@ AppVersion={#MyAppVersion}
 AppVerName={#MyAppVerName}
 AppPublisher={#MyAppPublisher}
 AppCopyright=Copyright (C) 2026 IDM
-VersionInfoVersion=3.6.1.0
+VersionInfoVersion=3.6.2.0
 VersionInfoTextVersion={#MyAppVersion}
 VersionInfoCompany={#MyAppPublisher}
 VersionInfoDescription=IDM Setup

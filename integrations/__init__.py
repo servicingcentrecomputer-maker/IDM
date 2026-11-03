@@ -10,6 +10,6 @@ from __future__ import annotations
 
 NATIVE_HOST_NAME = "com.idm.native"
 PROTOCOL_VERSION = 2
-NATIVE_HOST_VERSION = "3.6.1"
+NATIVE_HOST_VERSION = "3.6.2"
 
 __all__ = ["NATIVE_HOST_NAME", "NATIVE_HOST_VERSION", "PROTOCOL_VERSION"]

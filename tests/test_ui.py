@@ -13,8 +13,16 @@ from PySide6.QtWidgets import QDialog
 from idm.constants import custom_category_key
 from idm.core.scheduler import SCHEDULE_ACTIONS
 from idm.core.settings import AppSettings
+from idm.core.url_utils import format_size
 from idm.models.download_item import DownloadItem, DownloadStatus
-from idm.models.table_model import COLUMN_NAME, ITEM_ROLE
+from idm.models.table_model import (
+    COLUMN_DATE_ADDED,
+    COLUMN_DOWNLOADED,
+    COLUMN_ETA,
+    COLUMN_NAME,
+    COLUMN_SPEED,
+    ITEM_ROLE,
+)
 from idm.ui import main_window as main_window_module
 from idm.ui.dialogs.about import AboutDialog
 from idm.ui.dialogs.add_download import AddDownloadDialog
@@ -25,6 +33,7 @@ from idm.ui.dialogs.queue import QueueDialog
 from idm.ui.dialogs.scheduler import SchedulerDialog
 from idm.ui.main_window import MainWindow, _parse_download_list, _sidebar_counts
 from idm.ui.theme import ThemeManager
+from idm.ui.toolbar import DownloadToolbar
 
 ARTIFACTS = Path(__file__).resolve().parents[1] / "build" / "ui-check"
 
@@ -68,7 +77,7 @@ def window(qt_app, isolated_settings):
 
 def test_main_window_shell_and_theme_toggle(qt_app, window):
     assert window.isVisible()
-    assert window.windowTitle() == "IDM – Internet Download Manager"
+    assert window.windowTitle() == "IDM 3.6.2 – Internet Download Manager"
     assert set(window._toolbar.buttons) == {
         "add",
         "resume",
@@ -78,6 +87,7 @@ def test_main_window_shell_and_theme_toggle(qt_app, window):
         "stop_all",
         "delete",
         "delete_completed",
+        "refresh",
         "options",
         "scheduler",
         "queue",
@@ -87,6 +97,7 @@ def test_main_window_shell_and_theme_toggle(qt_app, window):
         window._actions
     )
     assert {
+        "refresh",
         "import",
         "export",
         "pause_all",
@@ -121,6 +132,43 @@ def test_main_window_shell_and_theme_toggle(qt_app, window):
     window._actions["view_show_toolbar"].setChecked(True)
     qt_app.processEvents()
     assert window._toolbar.isVisible()
+
+
+def test_sort_control_refresh_and_other_files(qt_app, window, tmp_path):
+    big = window._manager.add_download(
+        "https://example.com/big.zip",
+        "big.zip",
+        str(tmp_path),
+        start_immediately=False,
+    )
+    small = window._manager.add_download(
+        "https://example.com/small.zip",
+        "small.zip",
+        str(tmp_path),
+        start_immediately=False,
+    )
+    big.total_bytes = 2048
+    small.total_bytes = 1024
+    assert window._actions["refresh"].shortcut().toString() == "F5"
+
+    window._sort_combo.setCurrentIndex(2)  # Largest first
+    qt_app.processEvents()
+    first = window._proxy.index(0, COLUMN_NAME).data(ITEM_ROLE)
+    assert first.filename == "big.zip"
+
+    window._download_view.table._on_header_clicked(COLUMN_NAME)
+    assert window._sort_combo.currentIndex() == 1
+
+    window._sort_combo.setCurrentIndex(0)
+    window._refresh_download_list()
+    qt_app.processEvents()
+    assert window._proxy.rowCount() == 2
+    assert window._status_bar._message.text() == "Download list refreshed."
+
+    window._sidebar.select("other", emit_signal=True)
+    qt_app.processEvents()
+    assert window._page_title.text() == "Other Files"
+    assert window._proxy.rowCount() == 0
 
 
 def test_download_views_filters_search_and_screenshots(qt_app, server, window, tmp_path):
@@ -687,3 +735,119 @@ def test_dashboard_screenshot_with_active_download(qt_app, server, window, tmp_p
         lambda: active.status in {DownloadStatus.PAUSED, DownloadStatus.COMPLETED},
         10,
     )
+
+
+def test_dashboard_reports_total_downloads_and_total_data(qt_app, window, tmp_path):
+    window._sidebar.select("dashboard", emit_signal=True)
+    qt_app.processEvents()
+    dashboard = window._dashboard_page
+    assert dashboard._total_card._value.text() == "0"
+    assert dashboard._total_card._detail.text() == "No transfers recorded"
+
+    queued = window._manager.add_download(
+        "https://example.com/one.zip",
+        "one.zip",
+        str(tmp_path),
+        download_later=True,
+    )
+    window._manager.add_download(
+        "https://example.com/two.zip",
+        "two.zip",
+        str(tmp_path),
+        download_later=True,
+    )
+    dashboard.refresh()
+    assert dashboard._total_card._value.text() == "2"
+    assert dashboard._active_card._value.text() == "0"
+    assert "2 queued" in dashboard._active_card._detail.text()
+    assert dashboard._completed_card._value.text() == "0"
+    assert dashboard._data_card._value.text() == "0 B"
+    assert dashboard._hero_speed.accessibleName() == "Current speed"
+    assert dashboard._hero_active.text() == "0"
+
+    queued.status = DownloadStatus.COMPLETED
+    queued.total_bytes = 2048
+    queued.downloaded_bytes = 2048
+    dashboard.refresh()
+    assert dashboard._completed_card._value.text() == "1"
+    assert dashboard._data_card._value.text() == format_size(2048)
+
+
+def test_refresh_shows_loading_and_restores_the_table(qt_app, window, tmp_path):
+    window._manager.add_download(
+        "https://example.com/one.zip",
+        "one.zip",
+        str(tmp_path),
+        start_immediately=False,
+    )
+    window._sidebar.select("all", emit_signal=True)
+    qt_app.processEvents()
+    seen: list[bool] = []
+    original = window._model.reload
+
+    def reload():
+        seen.append(window._download_view.is_loading)
+        original()
+
+    window._model.reload = reload
+    window._refresh_download_list()
+    assert seen == [True]
+    assert not window._download_view.is_loading
+    assert window._download_view.table.isVisible()
+    assert window._status_bar._message.text() == "Download list refreshed."
+
+
+def test_toolbar_overflow_on_narrow_windows(qt_app, window):
+    toolbar = window._toolbar
+    window.resize(1040, 700)
+    qt_app.processEvents()
+    assert toolbar._overflow
+    assert not toolbar.buttons["options"].isVisible()
+    assert toolbar._overflow_button.isVisible()
+    assert [
+        action.text() for action in toolbar._overflow_menu.actions()
+    ] == ["Queue", "Scheduler", "Options"]
+
+    window.resize(1280, 700)
+    qt_app.processEvents()
+    assert not toolbar._overflow
+    assert toolbar.buttons["options"].isVisible()
+    assert not toolbar._overflow_button.isVisible()
+
+    standalone = DownloadToolbar(window._theme)
+    standalone.set_overflow(True)
+    fired: list[str] = []
+    standalone.options_requested.connect(lambda: fired.append("options"))
+    standalone.queue_requested.connect(lambda: fired.append("queue"))
+    standalone._overflow_actions["options"].trigger()
+    standalone._overflow_actions["queue"].trigger()
+    assert fired == ["options", "queue"]
+    standalone.deleteLater()
+
+
+def test_narrow_table_hides_low_priority_columns(qt_app, window, tmp_path):
+    window._manager.add_download(
+        "https://example.com/one.zip",
+        "one.zip",
+        str(tmp_path),
+        start_immediately=False,
+    )
+    window._sidebar.select("all", emit_signal=True)
+    window.resize(1366, 768)
+    qt_app.processEvents()
+    table = window._download_view.table
+    assert table.isVisible()
+    assert not table.isColumnHidden(COLUMN_DATE_ADDED)
+    assert not table.isColumnHidden(COLUMN_ETA)
+
+    window.resize(1040, 720)
+    qt_app.processEvents()
+    assert table.isColumnHidden(COLUMN_DATE_ADDED)
+    assert table.isColumnHidden(COLUMN_ETA)
+    assert table.isColumnHidden(COLUMN_DOWNLOADED)
+    assert table.isColumnHidden(COLUMN_SPEED)
+    assert table.columnWidth(COLUMN_NAME) >= 240
+
+    window.resize(1280, 720)
+    qt_app.processEvents()
+    assert not table.isColumnHidden(COLUMN_DATE_ADDED)

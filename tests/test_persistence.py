@@ -10,7 +10,7 @@ from idm.models.download_item import DownloadStatus
 def test_settings_round_trip(tmp_path, monkeypatch):
     monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))
     settings = AppSettings()
-    assert settings.theme == "classic"
+    assert settings.theme == "light"
     settings.theme = "dark"
     settings.max_concurrent = 5
     settings.speed_limit_kbps = 256

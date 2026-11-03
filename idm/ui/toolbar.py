@@ -3,17 +3,19 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QSize, Qt, Signal
-from PySide6.QtGui import QColor, QPainter, QPen
+from PySide6.QtGui import QAction, QColor, QPainter, QPen
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMenu,
     QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
+from ..constants import APP_VERSION
 from . import design, icons
 from .theme import ThemeManager
 
@@ -69,6 +71,7 @@ class DownloadToolbar(QFrame):
     stop_all_requested = Signal()
     delete_requested = Signal()
     delete_completed_requested = Signal()
+    refresh_requested = Signal()
     options_requested = Signal()
     scheduler_requested = Signal()
     queue_requested = Signal()
@@ -86,6 +89,10 @@ class DownloadToolbar(QFrame):
         layout = QHBoxLayout(self)
         layout.setContentsMargins(14, 9, 16, 9)
         layout.setSpacing(4)
+        self._layout = layout
+        self._separators: list[QFrame] = []
+        self._compact = False
+        self._overflow = False
 
         self._sidebar_button = QToolButton()
         self._sidebar_button.setObjectName("IconButton")
@@ -105,11 +112,20 @@ class DownloadToolbar(QFrame):
         brand_text = QVBoxLayout()
         brand_text.setContentsMargins(0, 0, 0, 0)
         brand_text.setSpacing(0)
+        name_row = QHBoxLayout()
+        name_row.setContentsMargins(0, 0, 0, 0)
+        name_row.setSpacing(6)
         self._brand_name = QLabel("IDM")
         self._brand_name.setObjectName("BrandName")
+        self._brand_version = QLabel(APP_VERSION)
+        self._brand_version.setObjectName("BrandVersion")
+        self._brand_version.setToolTip(f"IDM {APP_VERSION}")
+        name_row.addWidget(self._brand_name)
+        name_row.addWidget(self._brand_version, 0, Qt.AlignmentFlag.AlignVCenter)
+        name_row.addStretch(1)
         self._brand_tagline = QLabel("DOWNLOAD MANAGER")
         self._brand_tagline.setObjectName("BrandTagline")
-        brand_text.addWidget(self._brand_name)
+        brand_text.addLayout(name_row)
         brand_text.addWidget(self._brand_tagline)
 
         brand = QHBoxLayout()
@@ -155,6 +171,13 @@ class DownloadToolbar(QFrame):
             "Clear completed downloads from the list (Ctrl+Shift+Delete)",
             layout,
         )
+        self._add_button(
+            "refresh",
+            "Refresh",
+            "refresh",
+            "Refresh the download list (F5)",
+            layout,
+        )
         layout.addWidget(self._separator())
         self._add_button("queue", "Queue", "queue", "Manage the download queue (Ctrl+Shift+Q)", layout)
         self._add_button(
@@ -165,6 +188,30 @@ class DownloadToolbar(QFrame):
             layout,
         )
         self._add_button("options", "Options", "options", "IDM options (Ctrl+,)", layout)
+
+        self._overflow_button = QToolButton()
+        self._overflow_button.setObjectName("IconButton")
+        self._overflow_button.setToolTip("More actions")
+        self._overflow_button.setAccessibleName("More actions")
+        self._overflow_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._overflow_button.setFixedSize(40, 40)
+        self._overflow_button.setIconSize(QSize(21, 21))
+        self._overflow_button.setPopupMode(
+            QToolButton.ToolButtonPopupMode.InstantPopup
+        )
+        self._overflow_menu = QMenu(self._overflow_button)
+        self._overflow_actions: dict[str, QAction] = {}
+        for key, text, icon_name in (
+            ("queue", "Queue", "queue"),
+            ("scheduler", "Scheduler", "scheduler"),
+            ("options", "Options", "options"),
+        ):
+            action = self._overflow_menu.addAction(text)
+            action.setProperty("icon_name", icon_name)
+            self._overflow_actions[key] = action
+        self._overflow_button.setMenu(self._overflow_menu)
+        self._overflow_button.hide()
+        layout.addWidget(self._overflow_button)
 
         layout.addStretch(1)
 
@@ -213,19 +260,29 @@ class DownloadToolbar(QFrame):
         self.buttons["delete_completed"].clicked.connect(
             self.delete_completed_requested
         )
+        self.buttons["refresh"].clicked.connect(self.refresh_requested)
         self.buttons["options"].clicked.connect(self.options_requested)
         self.buttons["scheduler"].clicked.connect(self.scheduler_requested)
         self.buttons["queue"].clicked.connect(self.queue_requested)
+        self._overflow_actions["queue"].triggered.connect(
+            lambda _checked=False: self.queue_requested.emit()
+        )
+        self._overflow_actions["scheduler"].triggered.connect(
+            lambda _checked=False: self.scheduler_requested.emit()
+        )
+        self._overflow_actions["options"].triggered.connect(
+            lambda _checked=False: self.options_requested.emit()
+        )
 
         self._refresh_icons()
         theme.changed.connect(self._refresh_icons)
         self.update_actions(False, False, False, False, False)
 
-    @staticmethod
-    def _separator() -> QFrame:
+    def _separator(self) -> QFrame:
         separator = QFrame()
         separator.setObjectName("ToolbarSeparator")
         separator.setFixedSize(1, 32)
+        self._separators.append(separator)
         return separator
 
     def _add_button(
@@ -272,6 +329,11 @@ class DownloadToolbar(QFrame):
         self.settings_button.setIcon(icons.icon("options", p.text_muted, 21))
         self.search_action.setIcon(icons.icon("search", p.text_faint, 17))
         self.notifications_button.setIcon(icons.icon("bell", p.text_muted, 21))
+        self._overflow_button.setIcon(icons.icon("more", p.text_muted, 21))
+        for action in self._overflow_actions.values():
+            action.setIcon(
+                icons.icon(str(action.property("icon_name")), p.text_muted, 16)
+            )
 
     def set_sidebar_collapsed(self, collapsed: bool) -> None:
         self._sidebar_button.setToolTip(
@@ -282,8 +344,38 @@ class DownloadToolbar(QFrame):
         self.notifications_button.set_count(count)
 
     def set_compact(self, compact: bool) -> None:
+        compact = bool(compact)
+        if compact == self._compact:
+            return
+        self._compact = compact
         self._brand_tagline.setVisible(not compact)
-        self.search_field.setFixedWidth(200 if compact else 260)
+        self.search_field.setFixedWidth(176 if compact else 260)
+        self._layout.setSpacing(2 if compact else 4)
+        self.buttons["add"].setFixedSize(112 if compact else 126, 34 if compact else 40)
+        self.buttons["add"].setIconSize(QSize(19, 19) if compact else QSize(21, 21))
+        for key, button in self.buttons.items():
+            if key == "add":
+                continue
+            button.setFixedSize(34 if compact else 40, 34 if compact else 40)
+            button.setIconSize(QSize(19, 19) if compact else QSize(21, 21))
+        for separator in self._separators:
+            separator.setFixedSize(1, 26 if compact else 32)
+        self._overflow_button.setFixedSize(
+            34 if compact else 40, 34 if compact else 40
+        )
+        self._overflow_button.setIconSize(
+            QSize(19, 19) if compact else QSize(21, 21)
+        )
+
+    def set_overflow(self, overflow: bool) -> None:
+        """Move the secondary actions into the More menu on narrow windows."""
+        overflow = bool(overflow)
+        if overflow == self._overflow:
+            return
+        self._overflow = overflow
+        for key in ("queue", "scheduler", "options"):
+            self.buttons[key].setVisible(not overflow)
+        self._overflow_button.setVisible(overflow)
 
     def update_actions(
         self,

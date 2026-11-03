@@ -22,6 +22,7 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
+    QComboBox,
     QFileDialog,
     QHBoxLayout,
     QLabel,
@@ -36,6 +37,7 @@ from PySide6.QtWidgets import (
 from ..constants import (
     APP_DESCRIPTION,
     APP_NAME,
+    APP_VERSION,
     CATEGORY_FILTER_KEYS,
     CUSTOM_CATEGORY_PREFIX,
     PRIORITY_NORMAL,
@@ -48,7 +50,17 @@ from ..core.settings import AppSettings
 from ..core.url_utils import category_for_filename, guess_filename
 from ..engine.manager import DownloadManager
 from ..models.download_item import DownloadItem, DownloadStatus
-from ..models.table_model import DownloadFilterProxyModel, DownloadTableModel
+from ..models.table_model import (
+    COLUMN_DATE_ADDED,
+    COLUMN_DOWNLOADED,
+    COLUMN_NAME,
+    COLUMN_PROGRESS,
+    COLUMN_SIZE,
+    COLUMN_SPEED,
+    COLUMN_STATUS,
+    DownloadFilterProxyModel,
+    DownloadTableModel,
+)
 from ..updater.backup import create_pre_update_backup
 from ..updater.errors import RollbackError, UpdaterError
 from ..updater.launcher import (
@@ -122,6 +134,7 @@ _FILTER_TITLES = {
     "videos": "Videos",
     "programs": "Programs",
     "compressed": "Compressed Files",
+    "other": "Other Files",
 }
 
 _SECTION_TITLES = {
@@ -155,6 +168,10 @@ _SECTION_SUBTITLES = {
 }
 
 _RESUMABLE_ALL = {DownloadStatus.PAUSED, DownloadStatus.STOPPED}
+
+_SEARCH_MIN_WIDTH = 1240
+_TOOLBAR_COMPACT_BELOW = 1400
+_TOOLBAR_OVERFLOW_BELOW = 1120
 
 
 class MainWindow(QMainWindow):
@@ -208,7 +225,7 @@ class MainWindow(QMainWindow):
         self._proxy = DownloadFilterProxyModel(self)
         self._proxy.setSourceModel(self._model)
 
-        self.setWindowTitle(f"{APP_NAME} – {APP_DESCRIPTION}")
+        self.setWindowTitle(f"{APP_NAME} {APP_VERSION} – {APP_DESCRIPTION}")
         self.setWindowIcon(icons.app_icon())
         self.setMinimumSize(1040, 600)
         self.resize(1240, 760)
@@ -229,6 +246,8 @@ class MainWindow(QMainWindow):
         self._apply_view_settings()
         if self._settings.sidebar_collapsed:
             self._sidebar.set_collapsed(True, animate=False)
+        self._apply_responsive_layout()
+        self._refresh_connection_status()
         self._refresh_page_state()
         self._update_actions()
 
@@ -310,6 +329,11 @@ class MainWindow(QMainWindow):
         )
 
         view_menu = bar.addMenu("&View")
+        self._add_action(
+            view_menu, "refresh", "Refresh", self._refresh_download_list,
+            "F5", "refresh",
+        )
+        view_menu.addSeparator()
         self._add_view_action(view_menu, "show_toolbar", "Toolbar")
         self._add_view_action(view_menu, "show_sidebar", "Categories")
         self._add_view_action(view_menu, "show_download_list", "Download List")
@@ -437,6 +461,31 @@ class MainWindow(QMainWindow):
         header_layout.addLayout(title_box)
         header_layout.addStretch(1)
 
+        self._sort_label = QLabel("Sort")
+        self._sort_label.setObjectName("SortLabel")
+        header_layout.addWidget(
+            self._sort_label, 0, Qt.AlignmentFlag.AlignVCenter
+        )
+        self._sort_combo = QComboBox()
+        self._sort_combo.setObjectName("SortCombo")
+        self._sort_combo.setAccessibleName("Sort downloads")
+        self._sort_combo.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._sort_combo.setPlaceholderText("Custom sort")
+        self._sort_combo.addItem("Default order", None)
+        for label, column, order in (
+            ("File name (A-Z)", COLUMN_NAME, Qt.SortOrder.AscendingOrder),
+            ("Largest first", COLUMN_SIZE, Qt.SortOrder.DescendingOrder),
+            ("Newest first", COLUMN_DATE_ADDED, Qt.SortOrder.DescendingOrder),
+            ("Most downloaded", COLUMN_DOWNLOADED, Qt.SortOrder.DescendingOrder),
+            ("Progress (highest)", COLUMN_PROGRESS, Qt.SortOrder.DescendingOrder),
+            ("Fastest first", COLUMN_SPEED, Qt.SortOrder.DescendingOrder),
+            ("Status", COLUMN_STATUS, Qt.SortOrder.AscendingOrder),
+        ):
+            self._sort_combo.addItem(label, (column, order.value))
+        header_layout.addWidget(
+            self._sort_combo, 0, Qt.AlignmentFlag.AlignVCenter
+        )
+
         content_layout.addWidget(header)
 
         self._download_view = DownloadView(self._theme, content)
@@ -527,11 +576,21 @@ class MainWindow(QMainWindow):
         downloads_visible = (
             getattr(self, "_content_stack", None) is not None
             and self._content_stack.currentWidget() is self._downloads_page
+            and bool(self._settings.show_download_list)
         )
         if hasattr(self, "_search"):
-            self._search.setVisible(downloads_visible and self.width() >= 1200)
+            self._search.setVisible(
+                downloads_visible and self.width() >= _SEARCH_MIN_WIDTH
+            )
+        if hasattr(self, "_sort_label"):
+            self._sort_label.setVisible(
+                downloads_visible and self.width() >= 1180
+            )
+        if hasattr(self, "_sort_combo"):
+            self._sort_combo.setVisible(downloads_visible)
         if hasattr(self, "_toolbar"):
-            self._toolbar.set_compact(self.width() < 1320)
+            self._toolbar.set_compact(self.width() < _TOOLBAR_COMPACT_BELOW)
+            self._toolbar.set_overflow(self.width() < _TOOLBAR_OVERFLOW_BELOW)
 
     # ------------------------------------------------------------------ wiring
     def _wire_signals(self) -> None:
@@ -544,6 +603,7 @@ class MainWindow(QMainWindow):
         toolbar.stop_all_requested.connect(self._stop_all)
         toolbar.delete_requested.connect(self._delete_selected)
         toolbar.delete_completed_requested.connect(self._delete_completed)
+        toolbar.refresh_requested.connect(self._refresh_download_list)
         toolbar.options_requested.connect(self._open_options)
         toolbar.scheduler_requested.connect(self._open_scheduler)
         toolbar.queue_requested.connect(self._open_queue)
@@ -558,6 +618,8 @@ class MainWindow(QMainWindow):
         self._sidebar.collapsed_changed.connect(self._on_sidebar_collapsed)
         self._toolbar.set_sidebar_collapsed(bool(self._settings.sidebar_collapsed))
         self._search.textChanged.connect(self._on_search_changed)
+        self._sort_combo.currentIndexChanged.connect(self._on_sort_selected)
+        self._download_view.table.sort_changed.connect(self._sync_sort_combo)
 
         self._manager.download_added.connect(self._on_manager_changed)
         self._manager.download_updated.connect(self._on_manager_changed)
@@ -1091,6 +1153,7 @@ class MainWindow(QMainWindow):
             action = self._actions.get(f"view_{key}")
             if action is not None:
                 action.setChecked(bool(getattr(self._settings, key)))
+        self._refresh_page_state()
 
     def _open_scheduler(self) -> None:
         dialog = SchedulerDialog(self._scheduler, self._theme, self)
@@ -1732,11 +1795,57 @@ class MainWindow(QMainWindow):
         self._search.setFocus()
         self._search.selectAll()
 
+    def _refresh_connection_status(self, speed: float | None = None) -> None:
+        self._sidebar.set_connection(
+            self._manager.network_online,
+            self._manager.network_status_available,
+            self._manager.total_speed if speed is None else speed,
+        )
+
     def _clear_search(self) -> None:
         if self._search.text():
             self._search.clear()
         else:
             self._download_view.table.setFocus()
+
+    def _refresh_download_list(self) -> None:
+        view = self._download_view
+        on_downloads = self._content_stack.currentWidget() is self._downloads_page
+        # Paint the loading state before reloading, which can block for a
+        # moment when the history holds many transfers.
+        if on_downloads:
+            view.show_loading(True)
+            view.repaint()
+        try:
+            self._model.reload()
+        finally:
+            self._refresh_page_state()
+        self._status_bar.show_message("Download list refreshed.")
+
+    def _on_sort_selected(self, index: int) -> None:
+        data = self._sort_combo.itemData(index)
+        table = self._download_view.table
+        if not data:
+            table.reset_sort()
+            return
+        column, order = data
+        table.apply_sort(int(column), Qt.SortOrder(int(order)))
+
+    def _sync_sort_combo(self, column: int, order: int) -> None:
+        target = 0 if column < 0 else -1
+        if column >= 0:
+            for index in range(self._sort_combo.count()):
+                data = self._sort_combo.itemData(index)
+                if (
+                    data
+                    and int(data[0]) == int(column)
+                    and int(data[1]) == int(order)
+                ):
+                    target = index
+                    break
+        self._sort_combo.blockSignals(True)
+        self._sort_combo.setCurrentIndex(target)
+        self._sort_combo.blockSignals(False)
 
     # ------------------------------------------------------------------ filtering
     def _on_filter_changed(self, key: str) -> None:
@@ -1761,12 +1870,13 @@ class MainWindow(QMainWindow):
             self._page_title.setText(_SECTION_TITLES[key])
             self._page_subtitle.setText(_SECTION_SUBTITLES[key])
             self._search.setVisible(False)
+            self._sort_label.setVisible(False)
+            self._sort_combo.setVisible(False)
             self._content_stack.setCurrentWidget(page)
             self._refresh_sidebar_counts(items)
             self._update_actions()
             return
 
-        self._search.setVisible(self.width() >= 1200)
         self._content_stack.setCurrentWidget(self._downloads_page)
         if key.startswith(CUSTOM_CATEGORY_PREFIX):
             self._page_title.setText(custom_category_name(key))
@@ -1837,6 +1947,7 @@ class MainWindow(QMainWindow):
 
         self._refresh_sidebar_counts(items)
         self._update_actions()
+        self._apply_responsive_layout()
 
     def _refresh_sidebar_counts(self, items: list[DownloadItem]) -> None:
         unread = self._unread_notifications()
@@ -1879,6 +1990,7 @@ class MainWindow(QMainWindow):
         self._status_bar.set_stats(
             active, speed, queued, self._manager.total_downloaded
         )
+        self._refresh_connection_status(speed)
         self._refresh_page_state()
 
     def _on_download_completed(self, item: DownloadItem) -> None:

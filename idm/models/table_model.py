@@ -18,7 +18,6 @@ from ..constants import CATEGORY_FILTER_KEYS, custom_category_name
 from ..core.url_utils import (
     format_date_added,
     format_eta,
-    format_progress_size,
     format_size,
     format_speed,
 )
@@ -33,16 +32,18 @@ COLUMN_NAME = 0
 COLUMN_SIZE = 1
 COLUMN_STATUS = 2
 COLUMN_PROGRESS = 3
-COLUMN_SPEED = 4
-COLUMN_ETA = 5
-COLUMN_DATE_ADDED = 6
-COLUMN_COUNT = 7
+COLUMN_DOWNLOADED = 4
+COLUMN_SPEED = 5
+COLUMN_ETA = 6
+COLUMN_DATE_ADDED = 7
+COLUMN_COUNT = 8
 
 HEADERS = (
     "File Name",
     "Size",
     "Status",
     "Progress",
+    "Downloaded",
     "Speed",
     "Time Left",
     "Date Added",
@@ -103,6 +104,7 @@ class DownloadTableModel(QAbstractTableModel):
                 return HEADERS[section]
             if role == Qt.ItemDataRole.TextAlignmentRole and section in {
                 COLUMN_SIZE,
+                COLUMN_DOWNLOADED,
                 COLUMN_ETA,
                 COLUMN_SPEED,
                 COLUMN_DATE_ADDED,
@@ -131,17 +133,20 @@ class DownloadTableModel(QAbstractTableModel):
             if column == COLUMN_NAME:
                 return item.filename
             if column == COLUMN_SIZE:
-                if item.total_bytes is None:
-                    return "—"
-                if item.downloaded_bytes and item.status != DownloadStatus.COMPLETED:
-                    return format_progress_size(
-                        item.downloaded_bytes, item.total_bytes, compact=True
-                    )
                 return format_size(item.total_bytes)
             if column == COLUMN_STATUS:
                 return item.status.value
             if column == COLUMN_PROGRESS:
                 return _progress_text(item)
+            if column == COLUMN_DOWNLOADED:
+                received = item.downloaded_bytes or 0
+                if (
+                    not received
+                    and item.status == DownloadStatus.COMPLETED
+                    and item.total_bytes
+                ):
+                    received = item.total_bytes
+                return format_size(received) if received else "—"
             if column == COLUMN_SPEED:
                 return format_speed(item.speed) if item.is_active else "—"
             if column == COLUMN_ETA:
@@ -181,6 +186,7 @@ class DownloadTableModel(QAbstractTableModel):
 
         if role == Qt.ItemDataRole.TextAlignmentRole and column in {
             COLUMN_SIZE,
+            COLUMN_DOWNLOADED,
             COLUMN_ETA,
             COLUMN_SPEED,
             COLUMN_DATE_ADDED,
@@ -189,6 +195,7 @@ class DownloadTableModel(QAbstractTableModel):
 
         if role == Qt.ItemDataRole.ForegroundRole and column in {
             COLUMN_SIZE,
+            COLUMN_DOWNLOADED,
             COLUMN_ETA,
             COLUMN_SPEED,
             COLUMN_DATE_ADDED,
@@ -213,6 +220,12 @@ class DownloadTableModel(QAbstractTableModel):
             if item.id == download_id:
                 return row
         return -1
+
+    def reload(self) -> None:
+        """Re-read the manager's list, picking up changes made outside the model."""
+        self.beginResetModel()
+        self._items = list(self._manager.items())
+        self.endResetModel()
 
     def _on_added(self, item: DownloadItem) -> None:
         row = len(self._items)
@@ -270,6 +283,8 @@ def _sort_value(item: DownloadItem, column: int) -> Any:
         if item.status == DownloadStatus.COMPLETED:
             return 1.0
         return item.progress if item.progress is not None else -1.0
+    if column == COLUMN_DOWNLOADED:
+        return item.downloaded_bytes or 0
     if column == COLUMN_SPEED:
         return item.speed
     if column == COLUMN_ETA:

@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..constants import APP_VERSION, custom_category_key
+from ..core.url_utils import format_speed
 from . import design, icons
 from .theme import ThemeManager
 
@@ -47,6 +48,7 @@ _LIBRARY_ITEMS = (
     ("programs", "Programs", "app"),
     ("compressed", "Compressed Files", "archive"),
     ("images", "Images", "image"),
+    ("other", "Other Files", "file"),
 )
 
 _TOOL_ITEMS = (
@@ -246,7 +248,32 @@ class Sidebar(QFrame):
         footer_layout.addWidget(self._settings_button)
         self._footer = QLabel(f"IDM {APP_VERSION}")
         self._footer.setObjectName("SidebarFooter")
+        self._footer.setToolTip(f"Application version {APP_VERSION}")
         footer_layout.addWidget(self._footer)
+
+        self._connection = QFrame()
+        self._connection.setObjectName("SidebarConnection")
+        self._connection.setFixedHeight(26)
+        connection_layout = QHBoxLayout(self._connection)
+        connection_layout.setContentsMargins(8, 0, 8, 0)
+        connection_layout.setSpacing(6)
+        self._connection_dot = QLabel()
+        self._connection_dot.setFixedSize(8, 8)
+        connection_layout.addWidget(
+            self._connection_dot, 0, Qt.AlignmentFlag.AlignVCenter
+        )
+        self._connection_text = QLabel("Online")
+        self._connection_text.setObjectName("SidebarConnectionText")
+        connection_layout.addWidget(self._connection_text)
+        connection_layout.addStretch(1)
+        self._connection_speed = QLabel()
+        self._connection_speed.setObjectName("SidebarConnectionSpeed")
+        connection_layout.addWidget(self._connection_speed)
+        footer_layout.addWidget(self._connection)
+
+        self._online = True
+        self._network_available = True
+        self._speed = 0.0
         layout.addWidget(footer)
 
         for widget in self._lists():
@@ -255,8 +282,10 @@ class Sidebar(QFrame):
         self.select("all")
         theme.changed.connect(self._repaint)
         theme.changed.connect(self._refresh_icons)
+        theme.changed.connect(self._refresh_connection)
         self.set_counts({})
         self.set_custom_categories([])
+        self._refresh_connection()
 
     def _lists(self) -> tuple[QListWidget, ...]:
         return (
@@ -330,6 +359,8 @@ class Sidebar(QFrame):
         for label in self._section_labels:
             label.setVisible(not collapsed)
         self._footer.setVisible(not collapsed)
+        self._connection_text.setVisible(not collapsed)
+        self._connection_speed.setVisible(not collapsed)
         self._settings_button.setText("" if collapsed else "  Settings")
         self._settings_button.setFixedHeight(38)
         if collapsed:
@@ -380,10 +411,58 @@ class Sidebar(QFrame):
                 item.setData(COUNT_ROLE, int(counts.get(key, 0)) if key in counts else None)
         self._repaint()
 
+    def set_connection(
+        self, online: bool, available: bool = True, speed: float = 0.0
+    ) -> None:
+        online = bool(online)
+        available = bool(available)
+        speed = max(0.0, float(speed))
+        if (
+            online == self._online
+            and available == self._network_available
+            and abs(speed - self._speed) < 1.0
+        ):
+            return
+        self._online = online
+        self._network_available = available
+        self._speed = speed
+        self._refresh_connection()
+
+    def _refresh_connection(self) -> None:
+        p = self._theme.palette
+        if self._online:
+            dot_color = p.success
+            text = "Online"
+            detail = "Network is reachable"
+        else:
+            dot_color = p.danger
+            text = "Offline"
+            detail = "Windows reports no network connection"
+        if not self._network_available:
+            dot_color = p.success if self._online else p.text_faint
+            detail = (
+                "Network monitoring is unavailable; IDM assumes the "
+                "connection is available"
+            )
+        self._connection_dot.setStyleSheet(
+            f"background-color: {dot_color}; border-radius: 4px;"
+        )
+        self._connection_text.setText(text)
+        speed_text = (
+            format_speed(self._speed)
+            if self._online and self._speed > 0
+            else ""
+        )
+        self._connection_speed.setText(speed_text)
+        self._connection.setToolTip(f"{detail}. {speed_text}".strip())
+        if self._collapsed:
+            self._connection.setToolTip(f"Network: {text}")
+
     def _refresh_icons(self) -> None:
         self._settings_button.setIcon(
             icons.icon("options", self._theme.palette.text_muted, 18)
         )
+        self._refresh_connection()
         self._repaint()
 
     def _repaint(self) -> None:
