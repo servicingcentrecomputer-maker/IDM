@@ -34,6 +34,16 @@
 #define MyAppId "{{A52627A1-E4C9-456C-A397-BB6D9FD48F1B}"
 #define MyAppDataDir "{userappdata}\IDM Download Manager"
 
+; Optional bootstrap of the Python runtime that the project brief lists as a
+; prerequisite (Python 3.11+ and the packages listed in requirements.txt).
+; The packaged IDM.exe is self-contained, so this is only needed to run IDM,
+; its scripts or its tests from source.  The pinned installer is verified with
+; Windows Authenticode (Python Software Foundation) and the SHA-256 below.
+#define PythonInstallerUrl "https://www.python.org/ftp/python/3.13.12/python-3.13.12-amd64.exe"
+#define PythonInstallerSha256 "96159FCB523AE404B707186A75B4104EE23851E476A5E838E14584CF1E03F981"
+#define PythonDepsScript "assets\Install-PythonDeps.ps1"
+#define PythonDepsLog "IDM-PythonDeps-" + MyAppVersion + ".log"
+
 [Setup]
 AppId={#MyAppId}
 AppName={#MyAppName}
@@ -97,11 +107,15 @@ Name: "edge"; Description: "Integrate with Microsoft Edge"; GroupDescription: "B
 Name: "firefox"; Description: "Integrate with Mozilla Firefox"; GroupDescription: "Browser integration:"; Flags: checkedonce; Check: IsFirefoxInstalled
 Name: "brave"; Description: "Integrate with Brave"; GroupDescription: "Browser integration:"; Flags: checkedonce; Check: IsBraveInstalled
 Name: "opera"; Description: "Integrate with Opera"; GroupDescription: "Browser integration:"; Flags: checkedonce; Check: IsOperaInstalled
+Name: "pydeps"; Description: "Download and install Python 3.11+ and the packages listed in requirements.txt (only needed to run IDM from source)"; GroupDescription: "Additional components:"; Check: PythonRuntimeMissing
 
 [Files]
 Source: "..\dist\IDM\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "..\dist-extensions\*.zip"; DestDir: "{app}\browser-extensions"; Flags: ignoreversion skipifsourcedoesntexist
 Source: "..\BrowserExtension\IDMVideoAssistant\*"; DestDir: "{app}\BrowserExtension\IDMVideoAssistant"; Flags: ignoreversion recursesubdirs createallsubdirs
+; Shipped so the Python runtime bootstrap can be re-run after installation.
+Source: "{#PythonDepsScript}"; DestDir: "{app}\tools"; Flags: ignoreversion
+Source: "..\requirements.txt"; DestDir: "{app}\tools"; Flags: ignoreversion
 
 [Dirs]
 Name: "{app}\browser-integration"
@@ -147,6 +161,249 @@ Name: "{userstartup}\IDM"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,IDM}"; Flags: nowait postinstall skipifsilent
 
 [Code]
+{ ---------------------------------------------------------------------------
+  Python prerequisite detection: interpreter 3.11+ plus requirements.txt.
+  --------------------------------------------------------------------------- }
+
+var
+  PythonRuntimeChecked: Boolean;
+  PythonRuntimeFound: Boolean;
+
+function HasSwitch(Name: String): Boolean;
+var
+  Index: Integer;
+begin
+  Result := False;
+  for Index := 1 to ParamCount do
+    if CompareText(ParamStr(Index), Name) = 0 then
+      Result := True;
+end;
+
+function TrimTrailingSlashes(Value: String): String;
+begin
+  Result := Value;
+  while (Length(Result) > 1) and (Result[Length(Result)] = '\') do
+    Delete(Result, Length(Result), 1);
+end;
+
+procedure AppendPythonPath(Paths: TStrings; Exe: String);
+var
+  Index: Integer;
+begin
+  if (Exe = '') or not FileExists(Exe) then
+    Exit;
+  { The Microsoft Store alias is a stub that opens the Store instead of
+    running Python, so it is never a usable interpreter. }
+  if Pos('\WindowsApps\', Exe) > 0 then
+    Exit;
+  for Index := 0 to Paths.Count - 1 do
+    if CompareText(Paths[Index], Exe) = 0 then
+      Exit;
+  Paths.Add(Exe);
+end;
+
+procedure CollectRegistryPythons(Paths: TStrings);
+var
+  Base: String;
+  Roots: array[0..3] of Integer;
+  R, J: Integer;
+  SubKey, Value: String;
+  Names: TArrayOfString;
+begin
+  Base := 'Software\Python\PythonCore';
+  Roots[0] := HKLM;
+  Roots[1] := HKCU;
+  Roots[2] := HKLM32;
+  Roots[3] := HKCU32;
+  for R := 0 to 3 do
+  begin
+    if RegGetSubkeyNames(Roots[R], Base, Names) then
+      for J := 0 to GetArrayLength(Names) - 1 do
+      begin
+        SubKey := Base + '\' + Names[J] + '\InstallPath';
+        if RegQueryStringValue(Roots[R], SubKey, '', Value) or
+           RegQueryStringValue(Roots[R], SubKey, 'Path', Value) then
+          AppendPythonPath(Paths, TrimTrailingSlashes(Value) + '\python.exe');
+      end;
+  end;
+end;
+
+{ Standard CPython directory layouts: Python3xx and the 32-bit suffix used by
+  the Windows installer. Detected through DirExists rather than a directory
+  scan so the same code compiles under Inno Setup 6 and 7. }
+procedure CollectFolderPythons(Base: String; Paths: TStrings);
+var
+  Minor: Integer;
+  Name: String;
+begin
+  Base := TrimTrailingSlashes(Base);
+  for Minor := 11 to 20 do
+  begin
+    Name := Base + '\Python3' + IntToStr(Minor);
+    if DirExists(Name) then
+      AppendPythonPath(Paths, Name + '\python.exe');
+    Name := Name + '-32';
+    if DirExists(Name) then
+      AppendPythonPath(Paths, Name + '\python.exe');
+  end;
+end;
+
+procedure CollectPythonPaths(Paths: TStrings);
+begin
+  CollectRegistryPythons(Paths);
+  CollectFolderPythons(ExpandConstant('{localappdata}\Programs\Python'), Paths);
+  CollectFolderPythons(ExpandConstant('{localappdata}\Python'), Paths);
+  CollectFolderPythons(ExpandConstant('{pf}'), Paths);
+  CollectFolderPythons(ExpandConstant('{pf32}'), Paths);
+  CollectFolderPythons(ExpandConstant('{sd}'), Paths);
+  { The newer Python install manager exposes the interpreter as bin\python.exe. }
+  AppendPythonPath(Paths, ExpandConstant('{localappdata}\Python\bin\python.exe'));
+end;
+
+function PythonRuntimeComplete(Exe: String): Boolean;
+var
+  ResultCode: Integer;
+begin
+  Result := False;
+  if Exec(Exe, '-c "import sys,PySide6,requests,cryptography;' +
+                'sys.exit(0 if sys.version_info[:2]>=(3,11) else 41)"', '',
+          SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+    Result := (ResultCode = 0);
+end;
+
+function DetectPythonRuntime: Boolean;
+var
+  Paths: TStrings;
+  Index: Integer;
+begin
+  Result := False;
+  Paths := TStringList.Create;
+  try
+    CollectPythonPaths(Paths);
+    for Index := 0 to Paths.Count - 1 do
+      if PythonRuntimeComplete(Paths[Index]) then
+      begin
+        Log('IDM: usable Python runtime found at ' + Paths[Index]);
+        Result := True;
+        Exit;
+      end;
+    Log('IDM: no Python 3.11+ runtime providing requirements.txt was found.');
+  finally
+    Paths.Free;
+  end;
+end;
+
+{ Check function for the pydeps task: the option is only offered when the
+  runtime listed in the project brief is actually missing. }
+function PythonRuntimeMissing(): Boolean;
+begin
+  if not PythonRuntimeChecked then
+  begin
+    PythonRuntimeFound := DetectPythonRuntime();
+    PythonRuntimeChecked := True;
+  end;
+  Result := (not PythonRuntimeFound) and (not HasSwitch('/NOPYDEPS'));
+end;
+
+function ShouldInstallPythonDeps(): Boolean;
+begin
+  Result := WizardIsTaskSelected('pydeps') or
+            (HasSwitch('/PYDEPS') and not HasSwitch('/NOPYDEPS'));
+end;
+
+function PowerShellExe(): String;
+begin
+  Result := ExpandConstant('{sysnative}\WindowsPowerShell\v1.0\powershell.exe');
+  if not FileExists(Result) then
+    Result := ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe');
+end;
+
+procedure InstallPythonDeps;
+var
+  Script, Requirements, LogPath, Params, StartedText: String;
+  ResultCode: Integer;
+  Started: Boolean;
+begin
+  Script := ExpandConstant('{app}\tools\Install-PythonDeps.ps1');
+  Requirements := ExpandConstant('{app}\tools\requirements.txt');
+  LogPath := ExpandConstant('{%TEMP}');
+  if LogPath = '' then
+    LogPath := ExpandConstant('{tmp}');
+  LogPath := TrimTrailingSlashes(LogPath) + '\{#PythonDepsLog}';
+
+  Params := '-NoProfile -ExecutionPolicy Bypass -File "' + Script + '"' +
+            ' -RequirementsFile "' + Requirements + '"' +
+            ' -LogPath "' + LogPath + '"' +
+            ' -InstallerUrl "{#PythonInstallerUrl}"' +
+            ' -ExpectedSha256 "{#PythonInstallerSha256}"';
+  Log('IDM: starting the Python runtime bootstrap; log: ' + LogPath);
+  { The console is shown so that the download and the pip install report
+    progress; a silent install keeps it hidden. }
+  if WizardSilent then
+    Started := Exec(PowerShellExe(), Params, '', SW_HIDE, ewWaitUntilTerminated, ResultCode)
+  else
+    Started := Exec(PowerShellExe(), Params, '', SW_SHOW, ewWaitUntilTerminated, ResultCode);
+  if Started then
+    StartedText := 'Yes'
+  else
+    StartedText := 'No';
+
+  if (not Started) or ((ResultCode <> 0) and (ResultCode <> 10)) then
+  begin
+    Log('IDM: the Python runtime bootstrap failed (PowerShell started=' +
+        StartedText + ', exit code ' + IntToStr(ResultCode) + ').');
+    if not WizardSilent then
+      MsgBox('IDM was installed, but the Python runtime and its packages could not be '
+             + 'set up automatically (exit code ' + IntToStr(ResultCode) + ').'
+             + Chr(13) + Chr(10) + Chr(13) + Chr(10)
+             + 'Check ' + LogPath + ' for details. To retry manually, run:'
+             + Chr(13) + Chr(10)
+             + 'powershell -ExecutionPolicy Bypass -File "' + Script + '"'
+             + Chr(13) + Chr(10) + Chr(13) + Chr(10)
+             + 'IDM.exe itself does not need Python; it runs from the bundled runtime.',
+             mbInformation, MB_OK);
+  end else
+    Log('IDM: the Python runtime bootstrap finished (exit code '
+        + IntToStr(ResultCode) + ').');
+end;
+
+{ Compile with /DPyDepsProbe to test interpreter detection without installing
+  anything: the setup writes a report to %TEMP%\idm-pydeps-probe.txt and aborts. }
+#ifdef PyDepsProbe
+function InitializeSetup(): Boolean;
+var
+  Paths: TStrings;
+  Index: Integer;
+  Report, State: String;
+begin
+  Paths := TStringList.Create;
+  try
+    CollectPythonPaths(Paths);
+    Report := 'candidates=' + IntToStr(Paths.Count) + #13#10;
+    for Index := 0 to Paths.Count - 1 do
+    begin
+      if PythonRuntimeComplete(Paths[Index]) then
+        State := 'usable'
+      else
+        State := 'missing packages or too old';
+      Report := Report + State + ' - ' + Paths[Index] + #13#10;
+    end;
+    if PythonRuntimeMissing() then
+      Report := Report + 'RESULT: prerequisite task would be offered'
+    else
+      Report := Report + 'RESULT: runtime complete, task hidden';
+    SaveStringToFile(ExpandConstant('{%TEMP}\idm-pydeps-probe.txt'), Report, False);
+  finally
+    Paths.Free;
+  end;
+  Result := False;
+end;
+#endif
+
+{ ---------------------------------------------------------------------------
+  Browser integration
+  --------------------------------------------------------------------------- }
+
 function IsChromeInstalled(): Boolean;
 begin
   Result :=
@@ -431,6 +688,11 @@ begin
         ExpandConstant('{app}') + '\BrowserExtension\IDMVideoAssistant' + #13#10 + #13#10 +
         'See BrowserExtension\IDMVideoAssistant\InstallationGuide.md for details. IDM never installs browser extensions silently.',
         mbInformation, MB_OK);
+
+    { Last, because it can take a few minutes and must not delay or undo the
+      installation of IDM itself. }
+    if ShouldInstallPythonDeps() then
+      InstallPythonDeps;
   end;
 end;
 
@@ -447,13 +709,8 @@ begin
 end;
 
 function HasRemoveDataSwitch(): Boolean;
-var
-  Index: Integer;
 begin
-  Result := False;
-  for Index := 1 to ParamCount do
-    if CompareText(ParamStr(Index), '/REMOVEDATA') = 0 then
-      Result := True;
+  Result := HasSwitch('/REMOVEDATA');
 end;
 
 function RemoveAppData(): Boolean;

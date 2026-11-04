@@ -40,6 +40,7 @@ they are run on a machine that has not seen them before. See
 | `BrowserExtension\IDMVideoAssistant\` | Manifest V3 media-detection extension source, docs and icons |
 | `downloads\location_manager.py` | Browser/default/ask/file-type destination policy |
 | `scripts\register_native_host.py` | Manual/development native host registration and status |
+| `installer\assets\Install-PythonDeps.ps1` | Python runtime bootstrap, shipped as `{app}\tools\` |
 | `scripts\package_extensions.py` | Extension validation and store ZIP packaging |
 | `scripts\package_video_assistant.py` | IDM Video Assistant validation and unpacked ZIP packaging (no CRX) |
 | `scripts\package_release.py` | Release bundle assembly, version validation and checksums |
@@ -239,6 +240,9 @@ Run `IDM-Setup-3.6.1.exe` and follow the wizard. It offers:
 - Start Menu shortcut (always created).
 - Optional desktop shortcut (unchecked by default).
 - Optional launch at Windows sign-in (unchecked by default).
+- A Python runtime task, shown only when no Python 3.11+ with PySide6 and
+  Requests is found on the machine (checked by default). See
+  [Python runtime bootstrap](#python-runtime-bootstrap).
 - Launch IDM after installation.
 
 The installer requests the lowest privileges needed. It only elevates when the
@@ -261,8 +265,9 @@ IDM-Setup-3.6.1.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /ALLUSERS ^
   /DIR="C:\Program Files\IDM"
 ```
 
-In silent mode, both optional tasks default to off. Pass
-`/TASKS="desktopicon,startup"` to enable them.
+In silent mode, optional tasks default to off. Pass
+`/TASKS="desktopicon,startup"` to enable them. The Python runtime task is not
+offered in silent mode; use `/PYDEPS` instead.
 
 When invoking the setup or uninstaller from Git Bash, double the leading slash
 (`//VERYSILENT //SUPPRESSMSGBOXES`) or run it through PowerShell. MSYS otherwise
@@ -280,6 +285,46 @@ Useful Inno Setup switches:
 | `/CLOSEAPPLICATIONS` | Close a running IDM via Restart Manager |
 | `/LOG=<file>` | Write an installation log |
 | `/NORESTART` | Never restart Windows |
+| `/PYDEPS` | Also bootstrap the Python runtime, even in silent mode |
+| `/NOPYDEPS` | Never offer or run the Python runtime bootstrap |
+
+### Python runtime bootstrap
+
+The project brief lists Python 3.11+ (3.12+ recommended), PySide6 and Requests
+as prerequisites for running IDM from source. The packaged `IDM.exe` bundles
+its own runtime, so this bootstrap exists only for source use, the test suite
+and the helper scripts.
+
+When the wizard finds no interpreter that can already import everything listed
+in `requirements.txt` (PySide6, Requests and cryptography), it offers the
+`pydeps` task. With that task selected (or `/PYDEPS` passed) IDM runs
+`tools\Install-PythonDeps.ps1` after copying its own files:
+
+1. Search the registry (`PythonCore`, both 32-bit views), the standard
+   installation folders and the `py` launcher for a Python 3.11+ interpreter.
+2. If none exists, download the pinned python.org amd64 installer, verify its
+   Windows Authenticode signature (must be issued to the Python Software
+   Foundation) and the SHA-256 compiled into the setup, then install it
+   silently for the current user only.
+3. Run `python -m pip install -r requirements.txt` and re-check that the
+   interpreter can import everything the file lists.
+
+Nothing in this flow needs elevation, and a failure never rolls back the IDM
+installation: the console reports the reason, `%TEMP%\IDM-PythonDeps-<version>.log`
+keeps the detail, and the task can be retried later:
+
+```bat
+powershell -NoProfile -ExecutionPolicy Bypass ^
+  -File "%LOCALAPPDATA%\Programs\IDM\tools\Install-PythonDeps.ps1" ^
+  -RequirementsFile "%LOCALAPPDATA%\Programs\IDM\tools\requirements.txt"
+```
+
+The script exits with `0` when it installed something, `10` when the runtime
+was already complete, and `20`..`25` for download, signature, Python install,
+pip, verification and usage failures. `-CheckOnly` reports without changing
+anything. Update `PythonInstallerUrl` and `PythonInstallerSha256` in
+`installer\IDM_Setup.iss` together when the pinned interpreter changes; the
+build machine was validated with the 3.13.12 installer.
 
 ## Data layout
 
@@ -439,6 +484,9 @@ the commercial IDM's `%APPDATA%\IDM` folder.
   `HKCU\Software\Mozilla\NativeMessagingHosts\com.idm.native` in both registry
   views. Extension ZIPs are copied to `{app}\browser-extensions`; extensions
   are never installed or updated automatically.
+- The optional Python runtime bootstrap writes outside `{app}`: a per-user
+  Python under `%LOCALAPPDATA%\Programs\Python`, its own `HKCU\Software\Python`
+  keys and site-packages. It passes `PrependPath=0`, so PATH is not touched.
 - Version resources in `IDM.exe`, `IDM_NativeHost.exe` and `IDM_Updater.exe`:
   `FileVersion` / `ProductVersion` 1.0.0.0, description “IDM Internet Download
   Manager” / “IDM Browser Integration Host” / “IDM Updater”.
@@ -629,3 +677,13 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\build\installer-test\unins
 These tests create real shortcuts and a real uninstall registry entry for the
 current user, then remove them during uninstall. Do not run them on a machine
 that already has IDM installed from this project.
+
+Python runtime detection can be checked without touching the machine: compile
+with `/DPyDepsProbe`, run the result with `/VERYSILENT`, and read
+`%TEMP%\idm-pydeps-probe.txt`. That build lists every interpreter found, which
+of them can import `requirements.txt`, and whether the `pydeps` task would be
+offered; `InitializeSetup` then aborts before anything is installed.
+
+```bat
+ISCC.exe /Qp /DPyDepsProbe=1 installer\IDM_Setup.iss
+```

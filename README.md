@@ -48,6 +48,16 @@ See [docs/BROWSER_INTEGRATION.md](docs/BROWSER_INTEGRATION.md).
 - Python 3.11+ (Python 3.12+ recommended by the project brief)
 - PySide6 and Requests (installed from `requirements.txt`)
 
+The packaged `IDM.exe` bundles its own Python runtime, so the last two items
+are only needed to run IDM, its scripts or its tests from source. The installer
+detects them: when no interpreter can already import the packages listed in
+`requirements.txt` (PySide6, Requests and cryptography), it offers to download a
+Python installer from python.org and run `pip install -r requirements.txt` for
+the current user (no elevation required).
+Uncheck the task, or pass `/NOPYDEPS`, to skip it. See
+[PACKAGING.md](PACKAGING.md#python-runtime-bootstrap) for the switches, the
+signature checks and the retry command.
+
 The source build, automated tests and packaged installer were validated on
 Windows 11 x64 with Python **3.12.14**, PySide6 **6.12.0**, Requests
 **2.34.2** and Inno Setup 7. The code uses features available in Python 3.11
