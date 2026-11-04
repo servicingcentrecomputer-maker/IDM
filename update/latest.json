@@ -13,8 +13,8 @@
     "Brave and Opera are detected and registered, and the Browser Integration page now shows the native host answering live."
   ],
   "download_url": "https://github.com/servicingcentrecomputer-maker/IDM/releases/download/v3.6.3/IDM-Setup-3.6.3.exe",
-  "sha256": "bc8ba5b6fd4d325b4d779376420303feaeeb48459076a4d718a0a5641d19de99",
-  "package_size": 62572274,
+  "sha256": "cb2b4a8987442973d56cfb148fcf904a20014207aa967432bce09d2b97017853",
+  "package_size": 62578062,
   "mandatory": false,
-  "manifest_signature": "g7ou3z5wlYSDG7Tj6VI8tNCQ4ScleoRLU3mb62FYMxQ0dgO4mD68ZYRSW9BIKgOdfM8SiPFSZqqAX1iYEU0qCA=="
+  "manifest_signature": "T0BxT51fvNPOfs7X8qD0C0eCUcNG0rIvmhqSOM2plZRWRMiRdRcED/rckk/MecevQFhRzn/FfVKwgeUYOJ/uAA=="
 }
